@@ -19,11 +19,16 @@ for _d in ("poller", "web"):
 # from the repo, 30 files created and wrote a 610 KB database there; run from a folder holding a
 # real Mate database — a bind-mount, a copy taken for triage — the same tests would write into
 # that one. Set here, and NOT in a fixture, because it has to be true before the first import:
-# db_reader reads the variable at module level, once. `setdefault` leaves an explicit DB_PATH
-# alone, which is how a test that wants a specific file still gets it.
+# db_reader reads the variable at module level, once. An explicit DB_PATH is left alone, which
+# is how a test that wants a specific file still gets it.
 # → tests/test_the_suite_never_writes_into_the_working_directory.py
-os.environ.setdefault("DB_PATH", str(pathlib.Path(
-    tempfile.mkdtemp(prefix="mate-suite-")) / "leapmotor_mate.db"))
+# An xdist worker inherits the controller's DB_PATH; it takes a file of its own, an explicit path stays.
+_SUITE_DB = "MATE_SUITE_DB_PATH"
+_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if "DB_PATH" not in os.environ or (_worker and os.environ["DB_PATH"] == os.environ.get(_SUITE_DB)):
+    os.environ["DB_PATH"] = str(pathlib.Path(tempfile.mkdtemp(prefix="mate-suite-")) / "leapmotor_mate.db")
+    if not _worker:
+        os.environ[_SUITE_DB] = os.environ["DB_PATH"]
 
 # Whatever databases were sitting in the repository when the suite started, and when they were last
 # written. A test compares against this: the suite must leave every one of them untouched, because

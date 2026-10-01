@@ -50,3 +50,29 @@ def test_the_suite_writes_to_no_database_that_was_already_there():
     assert touched == [], f"the suite wrote into {touched}, which it did not create"
     created = [p.name for p in repo.glob("*.db") if p.name not in conftest.DB_FILES_AT_START]
     assert created == [], f"the suite created {created} in the repository"
+
+
+
+def _db_path_after_conftest(**env):
+    """DB_PATH a fresh interpreter ends up with once conftest has run with exactly `env` set."""
+    import subprocess
+    import sys
+    clean = {k: v for k, v in os.environ.items()
+             if k not in ("DB_PATH", "MATE_SUITE_DB_PATH", "PYTEST_XDIST_WORKER")}
+    out = subprocess.run([sys.executable, "-c", "import conftest, os; print(os.environ['DB_PATH'])"],
+                         cwd=pathlib.Path(__file__).parent, env={**clean, **env},
+                         capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+def test_an_xdist_worker_does_not_share_the_controllers_database(tmp_path):
+    """A worker inherits the controller's DB_PATH and must not keep it."""
+    chosen = str(tmp_path / "leapmotor_mate.db")
+    seen = _db_path_after_conftest(PYTEST_XDIST_WORKER="gw1", DB_PATH=chosen, MATE_SUITE_DB_PATH=chosen)
+    assert seen != chosen
+    assert pathlib.Path(seen).is_absolute()
+
+
+def test_a_path_somebody_set_on_purpose_is_kept_in_a_worker_too(tmp_path):
+    chosen = str(tmp_path / "mine.db")
+    assert _db_path_after_conftest(PYTEST_XDIST_WORKER="gw1", DB_PATH=chosen) == chosen
