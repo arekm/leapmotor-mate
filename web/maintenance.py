@@ -150,23 +150,23 @@ def latest_logs(vehicle_id: int) -> dict:
 
 def add_log(vehicle_id: int, service_type: str, done_date: str,
             done_km: Optional[float], note: str = "") -> None:
-    conn = db_reader._conn_rw()
-    _ensure_table(conn)
-    conn.execute(
-        "INSERT INTO maintenance_logs (vehicle_id, service_type, done_date, done_odometer_km, note) "
-        "VALUES (?,?,?,?,?)", (vehicle_id, service_type, done_date, done_km, note or None))
-    conn.commit()
+    with db_reader._conn_rw() as conn:
+        _ensure_table(conn)
+        conn.execute(
+            "INSERT INTO maintenance_logs (vehicle_id, service_type, done_date, done_odometer_km, note) "
+            "VALUES (?,?,?,?,?)", (vehicle_id, service_type, done_date, done_km, note or None))
+        conn.commit()
 
 
 def delete_log(vehicle_id: int, service_type: str) -> None:
     """Remove the most recent log for a service_type (an 'undo' for a mis-entry)."""
-    conn = db_reader._conn_rw()
-    _ensure_table(conn)
-    row = conn.execute("SELECT id FROM maintenance_logs WHERE vehicle_id=? AND service_type=? "
-                       "ORDER BY done_date DESC, id DESC LIMIT 1", (vehicle_id, service_type)).fetchone()
-    if row:
-        conn.execute("DELETE FROM maintenance_logs WHERE id=?", (row["id"],))
-        conn.commit()
+    with db_reader._conn_rw() as conn:
+        _ensure_table(conn)
+        row = conn.execute("SELECT id FROM maintenance_logs WHERE vehicle_id=? AND service_type=? "
+                           "ORDER BY done_date DESC, id DESC LIMIT 1", (vehicle_id, service_type)).fetchone()
+        if row:
+            conn.execute("DELETE FROM maintenance_logs WHERE id=?", (row["id"],))
+            conn.commit()
 
 
 def get_baseline():

@@ -188,8 +188,9 @@ def test_a_login_the_web_makes_lands_in_the_same_table(tmp_path, monkeypatch):
     session = command_client.LeapmotorSession()
     session._connect()
     assert session._api.logins == 1
-    rows = [tuple(r) for r in db_reader._conn_rw().execute(
-        "SELECT outcome, process, reason FROM poll_log ORDER BY id").fetchall()]
+    with db_reader._conn_rw() as rw:
+        rows = [tuple(r) for r in rw.execute(
+            "SELECT outcome, process, reason FROM poll_log ORDER BY id").fetchall()]
     assert rows == [("ok", "web", None)]
 
 

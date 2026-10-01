@@ -47,9 +47,8 @@ def _merged_pair(pdb):
     """A→B (parent) + B→C (child), joined the way the merge UI joins them."""
     parent = _add_trip(pdb, "2026-08-12T10:00:00+00:00", "2026-08-12T10:30:00+00:00", A, B, 20.0, 21.0)
     child = _add_trip(pdb, "2026-08-12T10:34:00+00:00", "2026-08-12T11:10:00+00:00", B, C, 21.0, 25.0)
-    conn = db_reader._conn_rw()
-    conn.execute("UPDATE trips SET merged_into_id=? WHERE id=?", (parent, child))
-    conn.commit()
+    with db_reader._conn_rw() as conn:
+        conn.execute("UPDATE trips SET merged_into_id=? WHERE id=?", (parent, child))
     return parent, child
 
 

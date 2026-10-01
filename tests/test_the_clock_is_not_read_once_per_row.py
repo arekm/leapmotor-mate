@@ -75,9 +75,8 @@ def test_a_change_is_never_served_stale(counted):
     """Whoever writes it — this process, the poller, a restore straight into the table — the next
     render must show the new zone. A cache with a lifetime cannot promise that; this does."""
     assert db_reader._local_dt("2026-03-14T12:00:00+00:00").utcoffset().total_seconds() == 3600
-    written = db_reader._conn_rw()
-    written.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('timezone','UTC')")
-    written.commit()
+    with db_reader._conn_rw() as written:
+        written.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('timezone','UTC')")
     after = db_reader._local_dt("2026-03-14T12:00:00+00:00")
     assert after.utcoffset().total_seconds() == 0, (
         f"the page still shows the old zone after the setting was changed behind the API: {after}"

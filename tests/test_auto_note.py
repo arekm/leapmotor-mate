@@ -286,12 +286,11 @@ def main_env(pdb, monkeypatch):
 def test_trip_auto_note_endpoint_writes_note_and_renders_textarea(main_env, monkeypatch):
     import geocode
     main, fake = main_env
-    conn = db_reader._conn_rw()
-    conn.execute(
-        "INSERT INTO trips (vehicle_id, started_at, ended_at, start_lat, start_lon, end_lat, end_lon)"
-        " VALUES (1,'2026-07-04T10:00:00+00:00','2026-07-04T10:30:00+00:00',45.0,9.0,45.1,9.1)")
-    conn.commit()
-    tid = conn.execute("SELECT MAX(id) AS id FROM trips").fetchone()["id"]
+    with db_reader._conn_rw() as conn:
+        conn.execute(
+            "INSERT INTO trips (vehicle_id, started_at, ended_at, start_lat, start_lon, end_lat, end_lon)"
+            " VALUES (1,'2026-07-04T10:00:00+00:00','2026-07-04T10:30:00+00:00',45.0,9.0,45.1,9.1)")
+        tid = conn.execute("SELECT MAX(id) AS id FROM trips").fetchone()["id"]
     monkeypatch.setattr(geocode, "reverse_geocode", lambda lat, lon, provider, api_key: "Some Address")
 
     asyncio.run(main.trip_generate_auto_note(_Req(), tid))
@@ -306,12 +305,11 @@ def test_trip_auto_note_endpoint_writes_note_and_renders_textarea(main_env, monk
 def test_charge_auto_note_endpoint_writes_note_and_renders_textarea(main_env, monkeypatch):
     import charger_locator
     main, fake = main_env
-    conn = db_reader._conn_rw()
-    conn.execute(
-        "INSERT INTO charges (vehicle_id, started_at, ended_at, latitude, longitude, location_type)"
-        " VALUES (1,'2026-07-04T12:00:00+00:00','2026-07-04T12:30:00+00:00',45.0,9.0,'FAST')")
-    conn.commit()
-    cid = conn.execute("SELECT MAX(id) AS id FROM charges").fetchone()["id"]
+    with db_reader._conn_rw() as conn:
+        conn.execute(
+            "INSERT INTO charges (vehicle_id, started_at, ended_at, latitude, longitude, location_type)"
+            " VALUES (1,'2026-07-04T12:00:00+00:00','2026-07-04T12:30:00+00:00',45.0,9.0,'FAST')")
+        cid = conn.execute("SELECT MAX(id) AS id FROM charges").fetchone()["id"]
     monkeypatch.setattr(charger_locator, "find_station_candidates",
                         lambda la, lo: ([{"name": None, "address": "Via Milano 1"}], True))
 

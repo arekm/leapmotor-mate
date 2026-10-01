@@ -160,6 +160,20 @@ def test_it_converts_once_the_zone_is_chosen(tmp_path, monkeypatch):
     assert store[db_reader.TZ_REPAIR_ZONE_KEY] == "Asia/Kuala_Lumpur"
 
 
+def test_a_row_that_cannot_be_converted_leaves_the_whole_pass_unapplied(tmp_path, monkeypatch):
+    """A pass is one transaction. When a row fails to convert, nothing moves and no marker is written,
+    so the next pass starts from the same rows instead of converting the converted ones once more."""
+    path = _db(tmp_path, monkeypatch, [("2026-07-21T10:40:00", None, "MANUAL"),
+                                       ("9999-12-31T23:30:00", None, "MANUAL")])   # no room west of UTC
+    store = {"timezone": "America/New_York"}
+    _settings(monkeypatch, store)
+    monkeypatch.setattr(db_reader, "_local_tz", lambda: timezone(timedelta(hours=-5)))
+    for _ in range(2):
+        assert db_reader.repair_manual_charge_timezones() == 0
+        assert _rows(path)[0][0] == "2026-07-21T10:40:00"
+    assert db_reader.TZ_REPAIR_ZONE_KEY not in store
+
+
 def test_a_zone_chosen_afterwards_re_anchors_what_the_wrong_one_converted(tmp_path, monkeypatch):
     """ghuaywen-ai's case exactly: converted under UTC, zone set to Kuala Lumpur later. His 10:40
     must come back to 10:40, not stay at 18:40."""

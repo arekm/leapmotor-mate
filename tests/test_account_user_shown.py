@@ -18,10 +18,8 @@ def _fresh(tmp_path, monkeypatch):
     """A DB with a settings table and nothing in it, and no ambient environment."""
     monkeypatch.setattr(R, "DB_PATH", str(tmp_path / "s.db"), raising=False)
     monkeypatch.delenv("LEAPMOTOR_USER", raising=False)
-    db = R._conn_rw()
-    db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-    db.commit()
-    return db
+    with R._conn_rw() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
 
 def test_the_wizards_account_is_the_one_reported(tmp_path, monkeypatch):

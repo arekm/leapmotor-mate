@@ -995,10 +995,16 @@ def _selected_or_first(db) -> Optional[int]:
     return row["id"] if row else None
 
 
-def _conn_rw() -> sqlite3.Connection:
+@contextlib.contextmanager
+def _conn_rw():
+    """A read-write connection for one block of writes; commits or rolls back like `with conn:`, then closes."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 # How close a CSV line has to be to a charge already in the database to be the SAME session rather
@@ -1061,13 +1067,12 @@ def log_login(outcome: str, process: str = "web", reason=None) -> None:
     """The web's own login attempts, in the same table the poller writes (poll_log). Best-effort:
     a row that cannot be written must not cost the command that needed the login."""
     try:
-        db = _conn_rw()
-        db.execute(
-            "INSERT INTO poll_log (at, kind, outcome, process, reason) VALUES (?, 'login', ?, ?, ?)",
-            (datetime.now(timezone.utc).isoformat(), outcome, process,
-             None if reason is None else str(reason)[:200]))
-        db.commit()
-        db.close()
+        with _conn_rw() as db:
+            db.execute(
+                "INSERT INTO poll_log (at, kind, outcome, process, reason) VALUES (?, 'login', ?, ?, ?)",
+                (datetime.now(timezone.utc).isoformat(), outcome, process,
+                 None if reason is None else str(reason)[:200]))
+            db.commit()
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).debug("poll_log skipped: %s", exc)
 
@@ -1088,32 +1093,32 @@ def get_settings_audit(limit: int = 40) -> list:
 
 
 def set_setting(key: str, value: str) -> None:
-    db = _conn_rw()
-    if key in AUDITED_SETTINGS:
-        try:
-            _ensure_settings_audit(db)
-            row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-            old = row[0] if row else None
-            # Saving a form re-writes every field in it, so only real movement is recorded —
-            # otherwise the trail fills with noise and the one line that matters is buried.
-            if str(old) != str(value):
-                db.execute("INSERT INTO settings_audit (changed_at, key, old_value, new_value)"
-                           " VALUES (?,?,?,?)",
-                           (datetime.now(timezone.utc).isoformat(), key, old, str(value)))
-        except sqlite3.Error:
-            pass                  # a trail that fails must never stop the setting being saved
-    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, str(value)))
-    db.commit()
-    _lang_memo[0] = None          # cheap and unconditional: any write re-reads the language once
+    with _conn_rw() as db:
+        if key in AUDITED_SETTINGS:
+            try:
+                _ensure_settings_audit(db)
+                row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                old = row[0] if row else None
+                # Saving a form re-writes every field in it, so only real movement is recorded —
+                # otherwise the trail fills with noise and the one line that matters is buried.
+                if str(old) != str(value):
+                    db.execute("INSERT INTO settings_audit (changed_at, key, old_value, new_value)"
+                               " VALUES (?,?,?,?)",
+                               (datetime.now(timezone.utc).isoformat(), key, old, str(value)))
+            except sqlite3.Error:
+                pass                  # a trail that fails must never stop the setting being saved
+        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, str(value)))
+        db.commit()
+        _lang_memo[0] = None          # cheap and unconditional: any write re-reads the language once
 
 
 def set_vehicle_capacity(vin: str, kwh: float) -> None:
     """Capacity onto ONE named car's row. The wizard uses it: it configures every car it found, and
     "current" has no meaning there — nothing is selected yet."""
-    db = _conn_rw()
-    db.execute("UPDATE vehicles SET capacity_kwh = ? WHERE lower(vin) = ?",
-               (float(kwh), str(vin).lower()))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute("UPDATE vehicles SET capacity_kwh = ? WHERE lower(vin) = ?",
+                   (float(kwh), str(vin).lower()))
+        db.commit()
 
 
 def set_vehicle_capacity_current(kwh: float, nominal: float = None) -> None:
@@ -1122,14 +1127,14 @@ def set_vehicle_capacity_current(kwh: float, nominal: float = None) -> None:
     setting, so writing only the global would leave the override ignored. Single-car today = the only
     row. Multi-car: 'current' IS the selected vehicle — writing the first car's capacity while
     looking at the second was an ~80% error on everything derived from a percentage (#186)."""
-    db = _conn_rw()
-    vid = _selected_or_first(db)
-    if vid is None:
-        return
-    db.execute("UPDATE vehicles SET capacity_kwh = ? WHERE id = ?", (float(kwh), vid))
-    if nominal is not None:
-        db.execute("UPDATE vehicles SET capacity_nominal_kwh = ? WHERE id = ?", (float(nominal), vid))
-    db.commit()
+    with _conn_rw() as db:
+        vid = _selected_or_first(db)
+        if vid is None:
+            return
+        db.execute("UPDATE vehicles SET capacity_kwh = ? WHERE id = ?", (float(kwh), vid))
+        if nominal is not None:
+            db.execute("UPDATE vehicles SET capacity_nominal_kwh = ? WHERE id = ?", (float(nominal), vid))
+        db.commit()
 
 
 # ── Research / BetaTester mode (MateBetaTesterOnly build) ──────────────────────
@@ -1139,10 +1144,10 @@ def add_logbook_note(note: str) -> None:
     note = (note or "").strip()
     if not note:
         return
-    db = _conn_rw()
-    db.execute("INSERT INTO research_logbook (ts, note) VALUES (?, ?)",
-               (int(time.time() * 1000), note[:2000]))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute("INSERT INTO research_logbook (ts, note) VALUES (?, ?)",
+                   (int(time.time() * 1000), note[:2000]))
+        db.commit()
 
 
 def get_logbook(limit: int = 200):
@@ -1220,12 +1225,9 @@ def get_trip_track(trip_id: int) -> list[dict]:
 
 def checkpoint() -> None:
     """Flush the WAL into the main DB file so a file copy/download is consistent."""
-    c = _conn_rw()
-    try:
+    with _conn_rw() as c:
         c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         c.commit()
-    finally:
-        c.close()
 
 
 _SECRET_PREFIX = "enc:v1:"                                    # marks Fernet-encrypted secrets (crypto._PREFIX)
@@ -1343,12 +1345,9 @@ def restore_database(blob: bytes) -> dict:
         if missing:
             raise ValueError("not a LeapMotor Mate backup (missing tables: %s)" % ", ".join(sorted(missing)))
         # Carry over the CURRENT (fresh) encrypted secrets so the just-entered login survives the swap.
-        rw = _conn_rw()
-        try:
+        with _conn_rw() as rw:
             fresh = rw.execute("SELECT key, value FROM settings WHERE value LIKE ?",
                                (_SECRET_PREFIX + "%",)).fetchall()
-        finally:
-            rw.close()
         con.execute("DELETE FROM settings WHERE value LIKE ?", (_SECRET_PREFIX + "%",))
         for r in fresh:
             con.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (r["key"], r["value"]))
@@ -1537,13 +1536,13 @@ def get_or_create_device_id() -> str:
     import uuid
     did = get_setting("mate_device_id")
     if not did:
-        db = _conn_rw()
-        db.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)",
-            ("mate_device_id", uuid.uuid4().hex),
-        )
-        db.commit()
-        did = get_setting("mate_device_id")
+        with _conn_rw() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)",
+                ("mate_device_id", uuid.uuid4().hex),
+            )
+            db.commit()
+            did = get_setting("mate_device_id")
     return did
 
 
@@ -2595,39 +2594,39 @@ def repair_merged_charge_pieces() -> int:
     typed gross_kwh (#222) — gives the children the type and no cost, the same answer a fresh
     confirm gives. Safe to run twice: the second pass finds nothing, because it selects on the
     absence it fills."""
-    db = _conn_rw()
-    if not _charges_have_merge(db):
-        return 0
-    has_gross = _charges_have_gross(db)
-    g = "p.gross_kwh" if has_gross else "NULL"
-    cm = "p.cost_manual" if _charges_have_cost_manual(db) else "NULL"
-    try:
-        rows = db.execute(
-            f"""SELECT c.id AS cid, c.energy_added_kwh AS c_kwh, c.ac_energy_kwh AS c_meter,
-                       p.id AS pid, p.location_type AS ptype, p.cost AS pcost,
-                       p.energy_added_kwh AS p_kwh, p.ac_energy_kwh AS p_meter, {g} AS p_gross,
-                       {cm} AS p_cost_manual
-                  FROM charges c JOIN charges p ON p.id = c.merged_into_id
-                 WHERE c.location_type IS NULL AND p.location_type IS NOT NULL""").fetchall()
-    except sqlite3.Error:
-        return 0
-    n = 0
-    for r in rows:
-        ptype = r["ptype"]
-        whole = bool(r["p_cost_manual"]) or bool(r["p_gross"] and r["p_gross"] > 0)
-        cost = None
-        if not whole and r["pcost"] is not None:
-            # what the parent was billed ON, in _billed_kwh's own order
-            p_billed = (r["p_meter"] if (ptype == "HOME" and r["p_meter"] and r["p_meter"] > 0)
-                        else r["p_kwh"])
-            c_billed = (r["c_meter"] if (ptype == "HOME" and r["c_meter"] and r["c_meter"] > 0)
-                        else r["c_kwh"])
-            if p_billed and p_billed > 0 and c_billed:
-                cost = round(r["pcost"] / p_billed * c_billed, 2)
-        db.execute("UPDATE charges SET location_type=?, cost=? WHERE id=?", (ptype, cost, r["cid"]))
-        n += 1
-    db.commit()
-    return n
+    with _conn_rw() as db:
+        if not _charges_have_merge(db):
+            return 0
+        has_gross = _charges_have_gross(db)
+        g = "p.gross_kwh" if has_gross else "NULL"
+        cm = "p.cost_manual" if _charges_have_cost_manual(db) else "NULL"
+        try:
+            rows = db.execute(
+                f"""SELECT c.id AS cid, c.energy_added_kwh AS c_kwh, c.ac_energy_kwh AS c_meter,
+                           p.id AS pid, p.location_type AS ptype, p.cost AS pcost,
+                           p.energy_added_kwh AS p_kwh, p.ac_energy_kwh AS p_meter, {g} AS p_gross,
+                           {cm} AS p_cost_manual
+                      FROM charges c JOIN charges p ON p.id = c.merged_into_id
+                     WHERE c.location_type IS NULL AND p.location_type IS NOT NULL""").fetchall()
+        except sqlite3.Error:
+            return 0
+        n = 0
+        for r in rows:
+            ptype = r["ptype"]
+            whole = bool(r["p_cost_manual"]) or bool(r["p_gross"] and r["p_gross"] > 0)
+            cost = None
+            if not whole and r["pcost"] is not None:
+                # what the parent was billed ON, in _billed_kwh's own order
+                p_billed = (r["p_meter"] if (ptype == "HOME" and r["p_meter"] and r["p_meter"] > 0)
+                            else r["p_kwh"])
+                c_billed = (r["c_meter"] if (ptype == "HOME" and r["c_meter"] and r["c_meter"] > 0)
+                            else r["c_kwh"])
+                if p_billed and p_billed > 0 and c_billed:
+                    cost = round(r["pcost"] / p_billed * c_billed, 2)
+            db.execute("UPDATE charges SET location_type=?, cost=? WHERE id=?", (ptype, cost, r["cid"]))
+            n += 1
+        db.commit()
+        return n
 
 
 def get_charge(charge_id: int) -> dict:
@@ -2662,23 +2661,23 @@ def set_charge_cost(charge_id: int, cost: Optional[float]) -> dict:
     empty submission, clear) `cost`/`cost_manual` directly. There is no computed default without a
     real type, so "clear" here just means "nothing typed" rather than "recompute" — the type badge,
     confirmed later, is what actually prices the charge from scratch if nothing was hand-typed."""
-    db = _conn_rw()
-    row = db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone()
-    if not row:
-        return {}
-    location_type = row["location_type"]
-    if location_type in CHARGE_TYPES:
+    with _conn_rw() as db:
+        row = db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone()
+        if not row:
+            return {}
+        location_type = row["location_type"]
+        if location_type in CHARGE_TYPES:
+            if cost is None:
+                return update_charge_type(charge_id, location_type, cost_manual=False)
+            return update_charge_type(charge_id, location_type, manual_cost=cost, cost_manual=True)
+        if not _charges_have_cost_manual(db):
+            return dict(row)
         if cost is None:
-            return update_charge_type(charge_id, location_type, cost_manual=False)
-        return update_charge_type(charge_id, location_type, manual_cost=cost, cost_manual=True)
-    if not _charges_have_cost_manual(db):
-        return dict(row)
-    if cost is None:
-        db.execute("UPDATE charges SET cost=NULL, cost_manual=0 WHERE id=?", (charge_id,))
-    else:
-        db.execute("UPDATE charges SET cost=?, cost_manual=1 WHERE id=?", (round(cost, 2), charge_id))
-    db.commit()
-    return dict(db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone())
+            db.execute("UPDATE charges SET cost=NULL, cost_manual=0 WHERE id=?", (charge_id,))
+        else:
+            db.execute("UPDATE charges SET cost=?, cost_manual=1 WHERE id=?", (round(cost, 2), charge_id))
+        db.commit()
+        return dict(db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone())
 
 
 def set_charge_gross_kwh(charge_id: int, gross_kwh: Optional[float]) -> dict:
@@ -2730,16 +2729,16 @@ def set_charge_solar_kwh(charge_id: int, solar_kwh: Optional[float]) -> dict:
 
     `location_type not in CHARGE_TYPES`, not `not row["location_type"]` — see set_charge_cost's
     docstring: a leftover `'MANUAL'` row is truthy but not a real type."""
-    db = _conn_rw()
-    row = db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone()
-    if not row or row["location_type"] not in CHARGE_TYPES:
-        return dict(row) if row else {}
-    if solar_kwh is None:
-        return dict(row)
-    measured = row["ac_energy_kwh"] or 0.0
-    if solar_kwh > measured:
-        return {**dict(row), "error": "too_much", "max": round(measured, 2)}
-    return update_charge_type(charge_id, row["location_type"], solar_kwh=solar_kwh)
+    with _conn_rw() as db:
+        row = db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone()
+        if not row or row["location_type"] not in CHARGE_TYPES:
+            return dict(row) if row else {}
+        if solar_kwh is None:
+            return dict(row)
+        measured = row["ac_energy_kwh"] or 0.0
+        if solar_kwh > measured:
+            return {**dict(row), "error": "too_much", "max": round(measured, 2)}
+        return update_charge_type(charge_id, row["location_type"], solar_kwh=solar_kwh)
 
 
 def set_charge_free(charge_id: int, free: bool) -> dict:
@@ -2754,22 +2753,22 @@ def set_charge_free(charge_id: int, free: bool) -> dict:
     typed price" rule: a home charge someone had manually priced, then marks free, means free — the
     mark is itself an explicit declaration and must win over a now-stale typed figure, in either
     direction (free → 0.0, unmarked → the normal computed price, never the old manual one)."""
-    db = _conn_rw()
-    row = db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone()
-    if not row:
-        return {}
-    charge = dict(row)
-    if charge.get("location_type") != "HOME":
-        return charge   # the free mark lives only on HOME charges
-    flag = 1 if free else 0
-    db.execute("UPDATE charges SET is_free=? WHERE id=?", (flag, charge_id))
-    db.commit()
-    # The price is then whatever HOME costs with the mark now set — 0.0 while free, the normal home
-    # cost when it is taken back — and update_charge_type is where that is decided, once, for this
-    # row AND for every other piece of a merged group. Doing the arithmetic here instead left a
-    # marked group costing its children's share: the page sums the pieces, and the mark stopped at
-    # the row that was clicked.
-    return update_charge_type(charge_id, "HOME", cost_manual=False)
+    with _conn_rw() as db:
+        row = db.execute("SELECT * FROM charges WHERE id=?", (charge_id,)).fetchone()
+        if not row:
+            return {}
+        charge = dict(row)
+        if charge.get("location_type") != "HOME":
+            return charge   # the free mark lives only on HOME charges
+        flag = 1 if free else 0
+        db.execute("UPDATE charges SET is_free=? WHERE id=?", (flag, charge_id))
+        db.commit()
+        # The price is then whatever HOME costs with the mark now set — 0.0 while free, the normal home
+        # cost when it is taken back — and update_charge_type is where that is decided, once, for this
+        # row AND for every other piece of a merged group. Doing the arithmetic here instead left a
+        # marked group costing its children's share: the page sums the pieces, and the mark stopped at
+        # the row that was clicked.
+        return update_charge_type(charge_id, "HOME", cost_manual=False)
 
 
 def auto_confirm_home_charges() -> int:
@@ -2891,9 +2890,9 @@ def get_labelled_locations() -> list[tuple]:
 
 
 def set_charge_location_name(charge_id: int, name: str, url: "str | None" = None) -> None:
-    db = _conn_rw()
-    db.execute("UPDATE charges SET location_name=?, location_url=? WHERE id=?", (name, url, charge_id))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute("UPDATE charges SET location_name=?, location_url=? WHERE id=?", (name, url, charge_id))
+        db.commit()
 
 
 def get_charge_location(charge_id: int) -> Optional[dict]:
@@ -2929,17 +2928,17 @@ def get_labelled_charges_missing_url(limit: int = 200) -> list[dict]:
 def set_charge_location_url(charge_id: int, url: str) -> None:
     """Backfill-only: fills in JUST the link, leaving the already-saved name (which
     may have been hand-picked from an ambiguity popup) untouched."""
-    db = _conn_rw()
-    db.execute("UPDATE charges SET location_url=? WHERE id=?", (url, charge_id))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute("UPDATE charges SET location_url=? WHERE id=?", (url, charge_id))
+        db.commit()
 
 
 def save_charge_note(charge_id: int, note: str) -> None:
     """#107: persist the optional free-text user note on a charge (empty string clears it)."""
     note = (note or "").strip()[:1000]
-    db = _conn_rw()
-    db.execute("UPDATE charges SET note=? WHERE id=?", (note or None, charge_id))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute("UPDATE charges SET note=? WHERE id=?", (note or None, charge_id))
+        db.commit()
 
 
 # #107: driving-mode tag values Mate accepts (manual — the cloud doesn't expose drive mode).
@@ -2962,10 +2961,10 @@ def save_trip_note(trip_id: int, note: str,
     note = (note or "").strip()[:1000]
     dm = drive_mode if drive_mode in DRIVE_MODES else None
     op = one_pedal if one_pedal in (0, 1) else None
-    db = _conn_rw()
-    db.execute("UPDATE trips SET note=?, drive_mode=?, one_pedal=? WHERE id=?",
-               (note or None, dm, op, trip_id))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute("UPDATE trips SET note=?, drive_mode=?, one_pedal=? WHERE id=?",
+                   (note or None, dm, op, trip_id))
+        db.commit()
 
 
 def update_charge_price(key: str, value: float) -> None:
@@ -3000,8 +2999,7 @@ def import_charge_row(row: dict) -> str:
     """
     started_at, energy = row.get("started_at"), row.get("energy_kwh")
     odo = row.get("odometer_km")
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         try:
             match = db.execute(
                 "SELECT id FROM charges "
@@ -3019,8 +3017,6 @@ def import_charge_row(row: dict) -> str:
             db.execute("UPDATE charges SET odometer_km = ? WHERE id = ?", (odo, match["id"]))
             db.commit()
             return "filled"
-    finally:
-        db.close()
     add_manual_charge(started_at, energy, row.get("cost"), row.get("charge_type", "AC"),
                       ended_at=row.get("ended_at"), start_soc=row.get("start_soc"),
                       end_soc=row.get("end_soc"), odometer_km=odo)
@@ -3045,8 +3041,7 @@ def add_manual_charge(started_at: str, energy_kwh: float, cost: Optional[float] 
     a REAL charge priced by hand is also `cost_manual=1`. Left as a plain INSERT rather than routed
     through `update_charge_type`/`compute_cost`: a row with no cost typed must stay `cost=NULL`
     exactly as it always has, not suddenly get auto-priced now that its type is a real one."""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         vehicle_id = _selected_or_first(db)
         loc_type, ct = manual_charge_type(charge_type)
         # #237 — the odometer only joins the INSERT where the column exists: the migration lives in
@@ -3073,8 +3068,6 @@ def add_manual_charge(started_at: str, energy_kwh: float, cost: Optional[float] 
         # lastrowid is Optional only for a cursor that last ran something other than an INSERT;
         # this one just inserted into a table with an INTEGER PRIMARY KEY, so it is the new id.
         return cur.lastrowid  # type: ignore[return-value]
-    finally:
-        db.close()
 
 
 def _span_minutes(started_at: Optional[str], ended_at: Optional[str]) -> Optional[float]:
@@ -3109,8 +3102,7 @@ def update_manual_charge(charge_id: int, started_at: str, energy_kwh: float,
     Guarded on manual_entry=1, and that guard is the point: on a MEASURED charge these fields are
     readings, and handing them to a form would let a typo overwrite what the car reported. Returns
     False — changing nothing — when the id isn't a typed-in charge."""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         loc_type, ct = manual_charge_type(charge_type)
         # #237 — the odometer is written only where the column exists, and clearing it is a real
         # answer: someone who realises they typed the wrong reading must be able to take it back
@@ -3133,8 +3125,6 @@ def update_manual_charge(charge_id: int, started_at: str, energy_kwh: float,
              ct, loc_type, cost, start_soc, end_soc, charge_id))
         db.commit()
         return cur.rowcount > 0
-    finally:
-        db.close()
 
 
 TZ_REPAIR_ZONE_KEY = "charge_tz_repair_zone"      # which zone the conversion was made in
@@ -3181,47 +3171,45 @@ def repair_manual_charge_timezones() -> int:
     zone used is now recorded, so if it later changes, the rows this pass converted are re-anchored
     to the new one — bounded by the highest id it covered, because a charge added afterwards was
     already written correctly and must not move."""
-    db = _conn_rw()
     try:
-        chosen = (get_setting("timezone", "") or "").strip()
-        if not chosen:
-            return 0     # see above: converting now would bake in a zone the user hasn't picked
-        tz = _local_tz()
-        prev_zone = (get_setting(TZ_REPAIR_ZONE_KEY, "") or "").strip()
-        rows = db.execute(
-            "SELECT id, started_at, ended_at FROM charges WHERE manual_entry = 1").fetchall()
-        try:
-            covered = int(get_setting(TZ_REPAIR_MAXID_KEY, "0") or 0)
-        except (TypeError, ValueError):
-            covered = 0
+        with _conn_rw() as db:
+            chosen = (get_setting("timezone", "") or "").strip()
+            if not chosen:
+                return 0     # see above: converting now would bake in a zone the user hasn't picked
+            tz = _local_tz()
+            prev_zone = (get_setting(TZ_REPAIR_ZONE_KEY, "") or "").strip()
+            rows = db.execute(
+                "SELECT id, started_at, ended_at FROM charges WHERE manual_entry = 1").fetchall()
+            try:
+                covered = int(get_setting(TZ_REPAIR_MAXID_KEY, "0") or 0)
+            except (TypeError, ValueError):
+                covered = 0
 
-        fixed = 0
-        for r in rows:
-            if prev_zone and prev_zone != chosen and r["id"] <= covered:
-                old = _resolve_tz(prev_zone)
-                started = _reanchor_iso(r["started_at"], old, tz)
-                ended = _reanchor_iso(r["ended_at"], old, tz) if r["ended_at"] else r["ended_at"]
-            else:
-                started = local_to_utc_iso(r["started_at"], tz)
-                ended = local_to_utc_iso(r["ended_at"], tz) if r["ended_at"] else r["ended_at"]
-            if started != r["started_at"] or ended != r["ended_at"]:
-                db.execute("UPDATE charges SET started_at = ?, ended_at = ? WHERE id = ?",
-                           (started, ended, r["id"]))
-                fixed += 1
-        if fixed:
-            db.commit()
-        set_setting(TZ_REPAIR_ZONE_KEY, chosen)
-        # The bound is written ONCE, by the pass that actually converted wall-clock text, and never
-        # raised afterwards. A charge entered later was already stored correctly for the zone in
-        # force at the time; re-anchoring it on a later zone change would corrupt a right answer —
-        # moving to another country doesn't change when you plugged in.
-        if not prev_zone and rows:
-            set_setting(TZ_REPAIR_MAXID_KEY, str(max(r["id"] for r in rows)))
-        return fixed
+            fixed = 0
+            for r in rows:
+                if prev_zone and prev_zone != chosen and r["id"] <= covered:
+                    old = _resolve_tz(prev_zone)
+                    started = _reanchor_iso(r["started_at"], old, tz)
+                    ended = _reanchor_iso(r["ended_at"], old, tz) if r["ended_at"] else r["ended_at"]
+                else:
+                    started = local_to_utc_iso(r["started_at"], tz)
+                    ended = local_to_utc_iso(r["ended_at"], tz) if r["ended_at"] else r["ended_at"]
+                if started != r["started_at"] or ended != r["ended_at"]:
+                    db.execute("UPDATE charges SET started_at = ?, ended_at = ? WHERE id = ?",
+                               (started, ended, r["id"]))
+                    fixed += 1
+            if fixed:
+                db.commit()
+            set_setting(TZ_REPAIR_ZONE_KEY, chosen)
+            # The bound is written ONCE, by the pass that actually converted wall-clock text, and never
+            # raised afterwards. A charge entered later was already stored correctly for the zone in
+            # force at the time; re-anchoring it on a later zone change would corrupt a right answer —
+            # moving to another country doesn't change when you plugged in.
+            if not prev_zone and rows:
+                set_setting(TZ_REPAIR_MAXID_KEY, str(max(r["id"] for r in rows)))
+            return fixed
     except Exception:      # noqa: BLE001 — a repair must never stop the app from starting
         return 0
-    finally:
-        db.close()
 
 
 # ── REEV fuel purchases (user-logged refuels → the fuel WAC €/L blend) ────────────
@@ -3296,8 +3284,7 @@ def add_fuel_purchase(ts: str, liters: float, price_per_l: Optional[float] = Non
         tot = ppl * liters
     if ppl <= 0:
         raise ValueError("price must be > 0")
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         if vehicle_id is None:
             vehicle_id = _selected_or_first(db)
@@ -3310,8 +3297,6 @@ def add_fuel_purchase(ts: str, liters: float, price_per_l: Optional[float] = Non
         db.commit()
         # lastrowid: Optional only for a cursor that last ran a non-INSERT — see add_manual_charge.
         return cur.lastrowid  # type: ignore[return-value]
-    finally:
-        db.close()
 
 
 def list_fuel_purchases(limit: int = 200) -> list:
@@ -3323,16 +3308,13 @@ def list_fuel_purchases(limit: int = 200) -> list:
     under the same word. The two calendars go through here, so they are scoped by this line too —
     which is exactly why the scope belongs HERE and not in each of them.
     → [[multi-car-scoping-audit]] · [[feedback-two-numbers-one-word]]"""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         rows = db.execute(
             "SELECT id, ts, liters, price_per_l, total_cost, fuel_before_pct, note "
             "FROM fuel_purchases WHERE vehicle_id = COALESCE(?, vehicle_id) "
             "ORDER BY ts DESC, id DESC LIMIT ?", (_current_vehicle_id(), int(limit))).fetchall()
         return [dict(r) for r in rows]
-    finally:
-        db.close()
 
 
 # The cloud's OWN per-trip record, as the API-v2 history worker stages it in
@@ -3480,15 +3462,12 @@ def research_fuel_purchases() -> list:
     fuel_purchases.csv (beta #36). Unlike list_fuel_purchases (the UI's: newest-first, no scope, no
     entered-when), this carries the two columns a REEV cost analysis turns on, all rows, oldest
     first so it reads like a ledger. `note` is left for the export's allow-list to drop."""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         rows = db.execute(
             "SELECT id, vehicle_id, ts, liters, price_per_l, total_cost, fuel_before_pct, created_at "
             "FROM fuel_purchases ORDER BY ts, id").fetchall()
         return [dict(r) for r in rows]
-    finally:
-        db.close()
 
 
 def get_fuel_calendar_month(year: int, month: int) -> dict:
@@ -3533,16 +3512,13 @@ def get_fuel_calendar_day(year: int, month: int, day: int) -> list[dict]:
 def delete_fuel_purchase(purchase_id: int) -> bool:
     """⚠️ Scoped: an id belonging to the OTHER car is refused, not deleted. After the list fix such
     a row is no longer on screen to click — this is the second lock, for a hand-made request."""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         cur = db.execute("DELETE FROM fuel_purchases WHERE id = ? "
                          "AND vehicle_id = COALESCE(?, vehicle_id)",
                          (int(purchase_id), _current_vehicle_id()))
         db.commit()
         return cur.rowcount > 0
-    finally:
-        db.close()
 
 
 def update_fuel_purchase(purchase_id: int, liters: Optional[float] = None,
@@ -3567,8 +3543,7 @@ def update_fuel_purchase(purchase_id: int, liters: Optional[float] = None,
         raise ValueError("liters must be > 0")
     if (ppl is not None and ppl <= 0) or (tot is not None and tot <= 0):
         raise ValueError("price must be > 0")
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         row = db.execute(
             "SELECT vehicle_id, ts, liters, price_per_l, total_cost FROM fuel_purchases "
@@ -3614,21 +3589,16 @@ def update_fuel_purchase(purchase_id: int, liters: Optional[float] = None,
              note if note is not None else None, new_ts, new_fb, int(purchase_id)))
         db.commit()
         return True
-    finally:
-        db.close()
 
 
 def get_fuel_purchase(purchase_id: int) -> Optional[dict]:
     """One refuel by id — the pre-fill for the inline edit form (beta discussion #34)."""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         r = db.execute(
             "SELECT id, vehicle_id, ts, liters, price_per_l, total_cost, fuel_before_pct, note "
             "FROM fuel_purchases WHERE id = ?", (int(purchase_id),)).fetchone()
         return dict(r) if r else None
-    finally:
-        db.close()
 
 
 # ── Refuel auto-detection (beta #14 @gm27271) ───────────────────────────────────────────────────
@@ -3684,77 +3654,75 @@ def scan_fuel_refuels(vehicle_id: Optional[int] = None) -> int:
     vid = vehicle_id if vehicle_id is not None else _current_vehicle_id()
     if vid is None:
         return 0
-    db = _conn_rw()
     try:
-        _ensure_fuel_detected(db)
-        _ensure_fuel_purchases(db)
-        # Per VEHICLE, like every other per-car setting here (`is_reev_<vin>`,
-        # `charge_limit_percent_<vin>`): the walk below is scoped to one car, so a single
-        # install-wide mark let the first car to scan carry the second one past its own history —
-        # and since the mark only moves forward, those refuels were skipped for good. Keyed on the
-        # id rather than the VIN because that is what this function is given and what the query
-        # filters on. The old shared key is deliberately NOT migrated onto either car: re-reading a
-        # car's log costs one longer scan and cannot duplicate anything (`_flush_fuel_run` refuses
-        # a run already filed or already logged by hand), while carrying it over would preserve the
-        # very skip this fixes.
-        mark = get_setting(_fuel_watermark_key(vid), "")
-        rows = db.execute(
-            "SELECT recorded_at, fuel_level_pct, fuel_liters FROM positions "
-            "WHERE vehicle_id = ? AND fuel_level_pct IS NOT NULL AND recorded_at >= ? "
-            "ORDER BY recorded_at", (vid, mark or "")).fetchall()
-        tank = reev_tank_l()
-        if len(rows) < 2:
-            return 0
-        found = 0
-        run = None      # the fill-up currently being followed; see below
-        for i in range(len(rows) - 1):
-            before, after = rows[i]["fuel_level_pct"], rows[i + 1]["fuel_level_pct"]
-            rising = after > before
+        with _conn_rw() as db:
+            _ensure_fuel_detected(db)
+            _ensure_fuel_purchases(db)
+            # Per VEHICLE, like every other per-car setting here (`is_reev_<vin>`,
+            # `charge_limit_percent_<vin>`): the walk below is scoped to one car, so a single
+            # install-wide mark let the first car to scan carry the second one past its own history —
+            # and since the mark only moves forward, those refuels were skipped for good. Keyed on the
+            # id rather than the VIN because that is what this function is given and what the query
+            # filters on. The old shared key is deliberately NOT migrated onto either car: re-reading a
+            # car's log costs one longer scan and cannot duplicate anything (`_flush_fuel_run` refuses
+            # a run already filed or already logged by hand), while carrying it over would preserve the
+            # very skip this fixes.
+            mark = get_setting(_fuel_watermark_key(vid), "")
+            rows = db.execute(
+                "SELECT recorded_at, fuel_level_pct, fuel_liters FROM positions "
+                "WHERE vehicle_id = ? AND fuel_level_pct IS NOT NULL AND recorded_at >= ? "
+                "ORDER BY recorded_at", (vid, mark or "")).fetchall()
+            tank = reev_tank_l()
+            if len(rows) < 2:
+                return 0
+            found = 0
+            run = None      # the fill-up currently being followed; see below
+            for i in range(len(rows) - 1):
+                before, after = rows[i]["fuel_level_pct"], rows[i + 1]["fuel_level_pct"]
+                rising = after > before
 
-            # ── extend the fill-up in progress ───────────────────────────────────
-            # A float gauge does not jump to the final level, it CLIMBS there. Measured on
-            # @pdifeo's C10 (beta #17, 30/07/2026): 70.2 → 78.0 → 87.0 → 98.1 → 100.0 % in four
-            # steps over twenty-eight seconds, every one of them reported. Counting the steps
-            # instead of the fill turned one tank into THREE refuels — and no floor can fix that:
-            # raise it and you still get three, lower it and you get four.
-            #
-            # So once a fill is open, absorb every further rise near it, HOWEVER SMALL. The tail
-            # is not a rounding detail: his last step is +1.9 points, under the floor, and
-            # dropping it books 13.213 L against a real 14.110.
-            # NB: measured to the reading being ABSORBED (i+1), not to rows[i] — rows[i] is the run's
-            # own last reading, so that distance is always zero and the window would never bite.
-            if run is not None and rising and \
-                    _minutes_between(run["ts"], rows[i + 1]["recorded_at"]) <= _FUEL_DETECT_SETTLE_MIN:
-                run.update(after=after, ts=rows[i + 1]["recorded_at"],
-                           l_after=rows[i + 1]["fuel_liters"])
-                continue
+                # ── extend the fill-up in progress ───────────────────────────────────
+                # A float gauge does not jump to the final level, it CLIMBS there. Measured on
+                # @pdifeo's C10 (beta #17, 30/07/2026): 70.2 → 78.0 → 87.0 → 98.1 → 100.0 % in four
+                # steps over twenty-eight seconds, every one of them reported. Counting the steps
+                # instead of the fill turned one tank into THREE refuels — and no floor can fix that:
+                # raise it and you still get three, lower it and you get four.
+                #
+                # So once a fill is open, absorb every further rise near it, HOWEVER SMALL. The tail
+                # is not a rounding detail: his last step is +1.9 points, under the floor, and
+                # dropping it books 13.213 L against a real 14.110.
+                # NB: measured to the reading being ABSORBED (i+1), not to rows[i] — rows[i] is the run's
+                # own last reading, so that distance is always zero and the window would never bite.
+                if run is not None and rising and \
+                        _minutes_between(run["ts"], rows[i + 1]["recorded_at"]) <= _FUEL_DETECT_SETTLE_MIN:
+                    run.update(after=after, ts=rows[i + 1]["recorded_at"],
+                               l_after=rows[i + 1]["fuel_liters"])
+                    continue
+                if run is not None:
+                    found += _flush_fuel_run(db, vid, run, tank)
+                    run = None
+
+                # ── or open a new one ────────────────────────────────────────────────
+                if after - before < _FUEL_DETECT_MIN_RISE_PCT:
+                    continue
+                # Confirm the rise held: the next reading must not have dropped back to the old level.
+                # (The last pair in the log has nothing after it — leave it for the next scan, when it
+                # will have.)
+                nxt = rows[i + 2]["fuel_level_pct"] if i + 2 < len(rows) else None
+                if nxt is None or nxt < before + _FUEL_DETECT_MIN_RISE_PCT / 2:
+                    continue
+                run = {"ts_from": rows[i]["recorded_at"], "ts": rows[i + 1]["recorded_at"],
+                       "before": before, "after": after,
+                       "l_before": rows[i]["fuel_liters"], "l_after": rows[i + 1]["fuel_liters"]}
             if run is not None:
                 found += _flush_fuel_run(db, vid, run, tank)
-                run = None
-
-            # ── or open a new one ────────────────────────────────────────────────
-            if after - before < _FUEL_DETECT_MIN_RISE_PCT:
-                continue
-            # Confirm the rise held: the next reading must not have dropped back to the old level.
-            # (The last pair in the log has nothing after it — leave it for the next scan, when it
-            # will have.)
-            nxt = rows[i + 2]["fuel_level_pct"] if i + 2 < len(rows) else None
-            if nxt is None or nxt < before + _FUEL_DETECT_MIN_RISE_PCT / 2:
-                continue
-            run = {"ts_from": rows[i]["recorded_at"], "ts": rows[i + 1]["recorded_at"],
-                   "before": before, "after": after,
-                   "l_before": rows[i]["fuel_liters"], "l_after": rows[i + 1]["fuel_liters"]}
-        if run is not None:
-            found += _flush_fuel_run(db, vid, run, tank)
-        # Stop one pair short: the final reading may yet be the "before" of a rise still arriving.
-        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                   (_fuel_watermark_key(vid), rows[-2]["recorded_at"]))
-        db.commit()
-        return found
+            # Stop one pair short: the final reading may yet be the "before" of a rise still arriving.
+            db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                       (_fuel_watermark_key(vid), rows[-2]["recorded_at"]))
+            db.commit()
+            return found
     except sqlite3.Error:
         return 0
-    finally:
-        db.close()
 
 
 def _minutes_between(a: str, b: str) -> float:
@@ -3825,18 +3793,16 @@ def _fill_is_capped(fuel_after_pct) -> bool:
 def list_fuel_detected(vehicle_id: Optional[int] = None) -> list:
     """Refuels Mate spotted and the user has not yet ruled on, newest first."""
     vid = vehicle_id if vehicle_id is not None else _current_vehicle_id()
-    db = _conn_rw()
     try:
-        _ensure_fuel_detected(db)
-        rows = db.execute(
-            "SELECT id, ts, ts_from, liters, fuel_before_pct, fuel_after_pct FROM fuel_detected "
-            "WHERE vehicle_id = COALESCE(?, vehicle_id) AND status = 'pending' "
-            "ORDER BY ts DESC, id DESC", (vid,)).fetchall()
-        return [{**dict(r), "capped": _fill_is_capped(r["fuel_after_pct"])} for r in rows]
+        with _conn_rw() as db:
+            _ensure_fuel_detected(db)
+            rows = db.execute(
+                "SELECT id, ts, ts_from, liters, fuel_before_pct, fuel_after_pct FROM fuel_detected "
+                "WHERE vehicle_id = COALESCE(?, vehicle_id) AND status = 'pending' "
+                "ORDER BY ts DESC, id DESC", (vid,)).fetchall()
+            return [{**dict(r), "capped": _fill_is_capped(r["fuel_after_pct"])} for r in rows]
     except sqlite3.Error:
         return []
-    finally:
-        db.close()
 
 
 def confirm_fuel_detected(det_id: int, liters: Optional[float] = None,
@@ -3848,15 +3814,13 @@ def confirm_fuel_detected(det_id: int, liters: Optional[float] = None,
 
     The refuel is filed at the detection's OWN instant, not "now" — which is also why its residual
     is exact where a hand-typed one can only be as good as the time typed."""
-    db = _conn_rw()
     try:
-        _ensure_fuel_detected(db)
-        row = db.execute("SELECT * FROM fuel_detected WHERE id = ? AND status = 'pending'",
-                         (int(det_id),)).fetchone()
+        with _conn_rw() as db:
+            _ensure_fuel_detected(db)
+            row = db.execute("SELECT * FROM fuel_detected WHERE id = ? AND status = 'pending'",
+                             (int(det_id),)).fetchone()
     except sqlite3.Error:
         return None
-    finally:
-        db.close()
     if row is None:
         return None
     n_liters = float(liters) if liters else float(row["liters"])
@@ -3866,28 +3830,23 @@ def confirm_fuel_detected(det_id: int, liters: Optional[float] = None,
                             # ⚠️ l'auto del RILEVAMENTO, non quella nella barra: fra due secondi
                             # la riga qui sotto viene cancellata e nessuno saprà più di chi era.
                             vehicle_id=row["vehicle_id"])
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         db.execute("DELETE FROM fuel_detected WHERE id = ?", (int(det_id),))
         db.commit()
-    finally:
-        db.close()
     return pid
 
 
 def dismiss_fuel_detected(det_id: int) -> bool:
     """"That was not a refuel." Kept as a tombstone rather than deleted — the scan reads the same
     positions again and would otherwise offer it back every single time."""
-    db = _conn_rw()
     try:
-        _ensure_fuel_detected(db)
-        cur = db.execute("UPDATE fuel_detected SET status = 'dismissed' WHERE id = ?", (int(det_id),))
-        db.commit()
-        return cur.rowcount > 0
+        with _conn_rw() as db:
+            _ensure_fuel_detected(db)
+            cur = db.execute("UPDATE fuel_detected SET status = 'dismissed' WHERE id = ?", (int(det_id),))
+            db.commit()
+            return cur.rowcount > 0
     except sqlite3.Error:
         return False
-    finally:
-        db.close()
 
 
 def latest_fuel_pct(vehicle_id: Optional[int] = None) -> Optional[float]:
@@ -3919,13 +3878,13 @@ def latest_fuel_liters(vehicle_id: Optional[int] = None) -> Optional[float]:
 
 def upsert_vehicle(vin: str, car_type: str) -> None:
     """Pre-populate vehicles table from setup wizard (before first poller run)."""
-    db = _conn_rw()
-    db.execute(
-        "INSERT OR IGNORE INTO vehicles (vin, car_type) VALUES (?,?)",
-        (vin, car_type),
-    )
-    db.execute("UPDATE vehicles SET car_type=? WHERE vin=?", (car_type, vin))
-    db.commit()
+    with _conn_rw() as db:
+        db.execute(
+            "INSERT OR IGNORE INTO vehicles (vin, car_type) VALUES (?,?)",
+            (vin, car_type),
+        )
+        db.execute("UPDATE vehicles SET car_type=? WHERE vin=?", (car_type, vin))
+        db.commit()
 
 
 def get_vehicle():
@@ -3961,22 +3920,22 @@ def write_optimistic_status(overrides: dict) -> None:
        Also caches overrides in memory so get_latest_status() can re-apply them
        even if the poller overwrites the DB row before the UI refresh fires.
     """
-    db = _conn_rw()
-    # Clone the CURRENT vehicle's latest row (scoped) — an unscoped "latest" could clone another
-    # car's position and insert the optimistic override under the wrong vehicle_id. No-op single-car.
-    row = db.execute("SELECT * FROM positions WHERE vehicle_id = COALESCE(?, vehicle_id) ORDER BY id DESC LIMIT 1",
-                     (_current_vehicle_id(),)).fetchone()
-    if not row:
-        return
-    d = dict(row)
-    d.pop("id")
-    d["recorded_at"] = datetime.now(timezone.utc).isoformat()
-    d.update(overrides)
-    cols = ", ".join(d.keys())
-    placeholders = ", ".join("?" for _ in d)
-    db.execute(f"INSERT INTO positions ({cols}) VALUES ({placeholders})", list(d.values()))
-    db.commit()
-    _opt_by_vehicle[_current_vehicle_id()] = (dict(overrides), time.time() + _OPT_TTL)
+    with _conn_rw() as db:
+        # Clone the CURRENT vehicle's latest row (scoped) — an unscoped "latest" could clone another
+        # car's position and insert the optimistic override under the wrong vehicle_id. No-op single-car.
+        row = db.execute("SELECT * FROM positions WHERE vehicle_id = COALESCE(?, vehicle_id) ORDER BY id DESC LIMIT 1",
+                         (_current_vehicle_id(),)).fetchone()
+        if not row:
+            return
+        d = dict(row)
+        d.pop("id")
+        d["recorded_at"] = datetime.now(timezone.utc).isoformat()
+        d.update(overrides)
+        cols = ", ".join(d.keys())
+        placeholders = ", ".join("?" for _ in d)
+        db.execute(f"INSERT INTO positions ({cols}) VALUES ({placeholders})", list(d.values()))
+        db.commit()
+        _opt_by_vehicle[_current_vehicle_id()] = (dict(overrides), time.time() + _OPT_TTL)
 
 
 # ── GPS sign on the web write path (GitHub #158 — same root cause as #30/#43) ───────────
@@ -4039,151 +3998,151 @@ def _coord_from_signals(signals: dict, axis: str) -> float:
 
 def save_fresh_signals(signals: dict) -> None:
     """Write a fresh position row from raw API signals (called after a command)."""
-    db = _conn_rw()
-    # See get_vehicle(): an unordered LIMIT 1 rides the UNIQUE(vin) covering index and can name
-    # the wrong car. This one WRITES a position row, so the wrong id would file live telemetry
-    # under the other vehicle.
-    vehicle_id = _current_vehicle_id()
-    if vehicle_id is None:
-        return
+    with _conn_rw() as db:
+        # See get_vehicle(): an unordered LIMIT 1 rides the UNIQUE(vin) covering index and can name
+        # the wrong car. This one WRITES a position row, so the wrong id would file live telemetry
+        # under the other vehicle.
+        vehicle_id = _current_vehicle_id()
+        if vehicle_id is None:
+            return
 
-    def sig(key, default=0):  return int(signals.get(key) or default)
-    def sigf(key, default=0.0): return float(signals.get(key) or default)
+        def sig(key, default=0):  return int(signals.get(key) or default)
+        def sigf(key, default=0.0): return float(signals.get(key) or default)
 
-    def sigf_or_none(key):   # a signal the car did not send stays absent in `positions`, not 0
-        try:
-            return float(signals[key]) if signals.get(key) is not None else None
-        except (TypeError, ValueError):
-            return None
+        def sigf_or_none(key):   # a signal the car did not send stays absent in `positions`, not 0
+            try:
+                return float(signals[key]) if signals.get(key) is not None else None
+            except (TypeError, ValueError):
+                return None
 
-    def _is_charging() -> bool:
-        """Charging only happens while PARKED, so the car must be stationary (gear P,
-        speed ~0); plus the cable plugged in (1149) AND a real charge current (1178). The
-        motion gate is essential: during regen the pack current is strongly negative (same
-        sign as charging) and 1149 reads 1 spuriously, so without it driving is mistaken
-        for charging. Signal 1939 (AC fan mode) is not used."""
-        if int(signals.get("1010") or 0) != 0:   # gear R/N/D → moving
-            return False
-        try:
-            if float(signals.get("1319") or 0) > 2.0:   # speed > 2 km/h → moving
+        def _is_charging() -> bool:
+            """Charging only happens while PARKED, so the car must be stationary (gear P,
+            speed ~0); plus the cable plugged in (1149) AND a real charge current (1178). The
+            motion gate is essential: during regen the pack current is strongly negative (same
+            sign as charging) and 1149 reads 1 spuriously, so without it driving is mistaken
+            for charging. Signal 1939 (AC fan mode) is not used."""
+            if int(signals.get("1010") or 0) != 0:   # gear R/N/D → moving
                 return False
-        except (TypeError, ValueError):
-            pass
-        # 0 = unplugged, 5 = the drive-time cable code the REEVs emit while moving (never a
-        # connection). 4 (charge postponed to the programmed window) is deliberately NOT here: see
-        # the poller's _is_charging — excluding it would drop a scheduled charge whole if the car
-        # keeps reporting 4 once its window opens. Kept identical so both readers of 1149 agree.
-        if int(signals.get("1149") or 0) in (0, 5):
-            return False
-        cur = signals.get("1178"); volt = signals.get("1177"); rem = signals.get("1200")
-        try:    cur = float(cur) if cur is not None else None
-        except (TypeError, ValueError): cur = None
-        try:    volt = float(volt) if volt is not None else None
-        except (TypeError, ValueError): volt = None
-        power = abs(cur * volt) / 1000.0 if (cur is not None and volt is not None and abs(cur) >= 3.0) else None
-        if cur is not None:
-            if abs(cur) < 3.0:
+            try:
+                if float(signals.get("1319") or 0) > 2.0:   # speed > 2 km/h → moving
+                    return False
+            except (TypeError, ValueError):
+                pass
+            # 0 = unplugged, 5 = the drive-time cable code the REEVs emit while moving (never a
+            # connection). 4 (charge postponed to the programmed window) is deliberately NOT here: see
+            # the poller's _is_charging — excluding it would drop a scheduled charge whole if the car
+            # keeps reporting 4 once its window opens. Kept identical so both readers of 1149 agree.
+            if int(signals.get("1149") or 0) in (0, 5):
                 return False
-            return rem is not None or (power is not None and power >= 1.0)
-        if power is not None:
-            return power >= 1.0 and rem is not None
-        return int(signals.get("1149") or 0) == 2
+            cur = signals.get("1178"); volt = signals.get("1177"); rem = signals.get("1200")
+            try:    cur = float(cur) if cur is not None else None
+            except (TypeError, ValueError): cur = None
+            try:    volt = float(volt) if volt is not None else None
+            except (TypeError, ValueError): volt = None
+            power = abs(cur * volt) / 1000.0 if (cur is not None and volt is not None and abs(cur) >= 3.0) else None
+            if cur is not None:
+                if abs(cur) < 3.0:
+                    return False
+                return rem is not None or (power is not None and power >= 1.0)
+            if power is not None:
+                return power >= 1.0 and rem is not None
+            return int(signals.get("1149") or 0) == 2
 
-    gear_map = {0: "P", 1: "R", 2: "N", 3: "D"}
-    # Windows: flag OR position % (the T03 reports only the %, the B10 only the flag) — same shared
-    # logic as the Vehicle page so the Overview tile / Commands grid agree with it (#62). use_pct is
-    # gated by the capability profile, exactly as _parse_vehicle_status does.
-    _wvin = (get_vehicle()[0] or {}).get("vin")
-    _wstates = capability_profile.window_open_states(
-        signals, bool(_wvin) and capability_profile.is_shown(_wvin, "windows_pct"))
-    windows_open = int(any(_wstates))
-    windows_open_count = sum(1 for w in _wstates if w)
+        gear_map = {0: "P", 1: "R", 2: "N", 3: "D"}
+        # Windows: flag OR position % (the T03 reports only the %, the B10 only the flag) — same shared
+        # logic as the Vehicle page so the Overview tile / Commands grid agree with it (#62). use_pct is
+        # gated by the capability profile, exactly as _parse_vehicle_status does.
+        _wvin = (get_vehicle()[0] or {}).get("vin")
+        _wstates = capability_profile.window_open_states(
+            signals, bool(_wvin) and capability_profile.is_shown(_wvin, "windows_pct"))
+        windows_open = int(any(_wstates))
+        windows_open_count = sum(1 for w in _wstates if w)
 
-    # Plug from signal 1149 (charge connection status), gated by motion. Signal 47
-    # (acInputSlowCharge) latches at 1 for ~5 min after an AC charge on the B10 and does
-    # NOT clear on unplug, so it cannot drive session-close; 1149 drops to 0 immediately.
-    # 1149 reads 1 spuriously during regen at speed → suppress while moving (mirrors
-    # _is_charging). 47 is only a fallback when 1149 is absent. See poller/client._is_plugged_in.
-    def _is_plugged() -> bool:
-        if int(signals.get("1010") or 0) != 0:          # gear R/N/D → moving
-            return False
-        try:
-            if float(signals.get("1319") or 0) > 2.0:   # speed > 2 km/h → moving
+        # Plug from signal 1149 (charge connection status), gated by motion. Signal 47
+        # (acInputSlowCharge) latches at 1 for ~5 min after an AC charge on the B10 and does
+        # NOT clear on unplug, so it cannot drive session-close; 1149 drops to 0 immediately.
+        # 1149 reads 1 spuriously during regen at speed → suppress while moving (mirrors
+        # _is_charging). 47 is only a fallback when 1149 is absent. See poller/client._is_plugged_in.
+        def _is_plugged() -> bool:
+            if int(signals.get("1010") or 0) != 0:          # gear R/N/D → moving
                 return False
-        except (TypeError, ValueError):
-            pass
-        conn = signals.get("1149")
-        if conn is None:
-            return int(signals.get("47") or 0) == 1     # legacy fallback when 1149 absent
-        try:
-            # 3 is the third connected state the REEVs cycle THROUGH mid-charge (1→2→3→2, parked,
-            # current ~0). The poller learned that in v2.8.4 — reading 3 as unplugged closed and
-            # reopened the session on every flicker and shredded one slow AC charge into empty
-            # fragments (beta #12/#13) — but this copy never got it and still disagreed with
-            # poller/client._is_plugged_in. 5 stays out: that one is the drive-time cable code.
-            # 4 is the cable connected with the charge DEFERRED to its programmed window — the
-            # state that blanked the cable on the Overview (#243), since it fell into "unplugged"
-            # by exclusion. Charging is judged separately, above: 4 is plugged and NOT charging.
-            return int(conn) in (1, 2, 3, 4)
-        except (TypeError, ValueError):
-            return False
-    plug_connected = _is_plugged()
+            try:
+                if float(signals.get("1319") or 0) > 2.0:   # speed > 2 km/h → moving
+                    return False
+            except (TypeError, ValueError):
+                pass
+            conn = signals.get("1149")
+            if conn is None:
+                return int(signals.get("47") or 0) == 1     # legacy fallback when 1149 absent
+            try:
+                # 3 is the third connected state the REEVs cycle THROUGH mid-charge (1→2→3→2, parked,
+                # current ~0). The poller learned that in v2.8.4 — reading 3 as unplugged closed and
+                # reopened the session on every flicker and shredded one slow AC charge into empty
+                # fragments (beta #12/#13) — but this copy never got it and still disagreed with
+                # poller/client._is_plugged_in. 5 stays out: that one is the drive-time cable code.
+                # 4 is the cable connected with the charge DEFERRED to its programmed window — the
+                # state that blanked the cable on the Overview (#243), since it fell into "unplugged"
+                # by exclusion. Charging is judged separately, above: 4 is plugged and NOT charging.
+                return int(conn) in (1, 2, 3, 4)
+            except (TypeError, ValueError):
+                return False
+        plug_connected = _is_plugged()
 
-    db.execute(
-        """INSERT INTO positions (
-            vehicle_id, recorded_at,
-            latitude, longitude, speed_kmh, odometer_km,
-            soc, range_km, gear, charging,
-            battery_min_temp, climate_target_temp, inside_temp,
-            is_locked, climate_on, plug_connected,
-            climate_cooling, climate_heating, climate_defrost,
-            trunk_open, windows_open, sunshade_open,
-            remaining_charge_min, charge_voltage_v, charge_current_a, charge_completed, security_active,
-            ready, windows_open_count,
-            door_driver_open, door_passenger_open, door_rear_left_open, door_rear_right_open,
-            window_fl_open, window_rl_open, ac_port_mode,
-            fan_level, recirculation, climate_mode,
-            fuel_level_pct, fuel_range_km, combined_range_km, frame_ts
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            vehicle_id,
-            datetime.now(timezone.utc).isoformat(),
-            _coord_from_signals(signals, "lat"),   # signed pair first (#158) — never the bare
-            _coord_from_signals(signals, "lon"),   # unsigned magnitude, or west cars land at sea
-            sigf_or_none("1319"), sigf_or_none("1318"),
-            sigf("100003") or sigf("1204"),
-            capability_profile.battery_range_km(signals),   # the poller's rule (#365)
-            gear_map.get(sig("1010"), "P"),
-            int(_is_charging()),
-            sigf("1182"), sigf("2183"), sigf("1349"),
-            sig("1298"), sig("1938"), int(plug_connected),
-            int(sig("2669") == 2), int(sig("2681") == 2), int(sig("1945") == 2),
-            sig("1281"), windows_open, sig("1724"),
-            sig("1200") or None,
-            sigf("1177") or None,
-            sigf("1178") or None,
-            int(int(signals.get("3736") or 0) != 0),
-            # assente → NULL, come il poller: due scrittori sullo stesso campo, una sola regola
-            (None if signals.get("1255") is None else int(int(signals.get("1255") or 0) != 0)),
-            None if (ready := sigf_or_none("1258")) is None else int(ready == 1),   # READY; absent → NULL
-            windows_open_count,
-            1 if sig("1277") else 0, 1 if sig("1278") else 0,
-            1 if sig("1279") else 0, 1 if sig("1280") else 0,
-            1 if _wstates[0] else 0, 1 if _wstates[2] else 0,
-            int(signals.get("47") or 0),     # ac_port_mode — same as the poller; without it this
-                                             # web-side write left NULL, fragmenting V2L sessions (#)
-            sig("1941") or None,             # fan_level (1941 acAirVolume 1-7; 0 → NULL = no data)
-            int(sig("1943") == 1),           # recirculation (1=recirc/in, 0=fresh/out)
-            int(signals["3713"]) if signals.get("3713") is not None else None,  # climate_mode (3713)
-            # REEV dual-energy (mirror the poller's save_position): fuel level % (3235) MUST be None on a
-            # BEV — sigf() would coerce absent → 0.0 and wrongly trip the "has fuel" guard at 0%.
-            float(signals["3235"]) if signals.get("3235") is not None else None,
-            sigf("3259") or None, sigf("3261") or None,   # fuel range (3259) + combined range (3261)
-            # The frame's own clock, read as the poller reads it: 0 or absent is no clock → NULL.
-            int(signals.get("sts") or signals.get("1") or 0) or None,
-        ),
-    )
-    db.commit()
+        db.execute(
+            """INSERT INTO positions (
+                vehicle_id, recorded_at,
+                latitude, longitude, speed_kmh, odometer_km,
+                soc, range_km, gear, charging,
+                battery_min_temp, climate_target_temp, inside_temp,
+                is_locked, climate_on, plug_connected,
+                climate_cooling, climate_heating, climate_defrost,
+                trunk_open, windows_open, sunshade_open,
+                remaining_charge_min, charge_voltage_v, charge_current_a, charge_completed, security_active,
+                ready, windows_open_count,
+                door_driver_open, door_passenger_open, door_rear_left_open, door_rear_right_open,
+                window_fl_open, window_rl_open, ac_port_mode,
+                fan_level, recirculation, climate_mode,
+                fuel_level_pct, fuel_range_km, combined_range_km, frame_ts
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                vehicle_id,
+                datetime.now(timezone.utc).isoformat(),
+                _coord_from_signals(signals, "lat"),   # signed pair first (#158) — never the bare
+                _coord_from_signals(signals, "lon"),   # unsigned magnitude, or west cars land at sea
+                sigf_or_none("1319"), sigf_or_none("1318"),
+                sigf("100003") or sigf("1204"),
+                capability_profile.battery_range_km(signals),   # the poller's rule (#365)
+                gear_map.get(sig("1010"), "P"),
+                int(_is_charging()),
+                sigf("1182"), sigf("2183"), sigf("1349"),
+                sig("1298"), sig("1938"), int(plug_connected),
+                int(sig("2669") == 2), int(sig("2681") == 2), int(sig("1945") == 2),
+                sig("1281"), windows_open, sig("1724"),
+                sig("1200") or None,
+                sigf("1177") or None,
+                sigf("1178") or None,
+                int(int(signals.get("3736") or 0) != 0),
+                # assente → NULL, come il poller: due scrittori sullo stesso campo, una sola regola
+                (None if signals.get("1255") is None else int(int(signals.get("1255") or 0) != 0)),
+                None if (ready := sigf_or_none("1258")) is None else int(ready == 1),   # READY; absent → NULL
+                windows_open_count,
+                1 if sig("1277") else 0, 1 if sig("1278") else 0,
+                1 if sig("1279") else 0, 1 if sig("1280") else 0,
+                1 if _wstates[0] else 0, 1 if _wstates[2] else 0,
+                int(signals.get("47") or 0),     # ac_port_mode — same as the poller; without it this
+                                                 # web-side write left NULL, fragmenting V2L sessions (#)
+                sig("1941") or None,             # fan_level (1941 acAirVolume 1-7; 0 → NULL = no data)
+                int(sig("1943") == 1),           # recirculation (1=recirc/in, 0=fresh/out)
+                int(signals["3713"]) if signals.get("3713") is not None else None,  # climate_mode (3713)
+                # REEV dual-energy (mirror the poller's save_position): fuel level % (3235) MUST be None on a
+                # BEV — sigf() would coerce absent → 0.0 and wrongly trip the "has fuel" guard at 0%.
+                float(signals["3235"]) if signals.get("3235") is not None else None,
+                sigf("3259") or None, sigf("3261") or None,   # fuel range (3259) + combined range (3261)
+                # The frame's own clock, read as the poller reads it: 0 or absent is no clock → NULL.
+                int(signals.get("sts") or signals.get("1") or 0) or None,
+            ),
+        )
+        db.commit()
 
 
 # A poll that comes back without a GPS fix is stored as (0, 0): a missing coordinate parses to 0.0.
@@ -4650,15 +4609,15 @@ def polling_summary(now: Optional[float] = None) -> dict:
 def delete_trip(trip_id: int) -> bool:
     """Permanently remove a trip and its GPS track. Returns True if a trip was deleted.
     Day/month/lifetime trip totals recompute from the DB, so they update automatically."""
-    db = _conn_rw()
-    # Deleting a merged trip removes the whole group (the parent + every child) and their tracks.
-    ids = [trip_id] + [r["id"] for r in db.execute(
-        "SELECT id FROM trips WHERE merged_into_id=?", (trip_id,)).fetchall()]
-    ph = ",".join("?" * len(ids))
-    cur = db.execute(f"DELETE FROM trips WHERE id IN ({ph})", ids)
-    db.execute(f"DELETE FROM trip_positions WHERE trip_id IN ({ph})", ids)
-    db.commit()
-    return cur.rowcount > 0
+    with _conn_rw() as db:
+        # Deleting a merged trip removes the whole group (the parent + every child) and their tracks.
+        ids = [trip_id] + [r["id"] for r in db.execute(
+            "SELECT id FROM trips WHERE merged_into_id=?", (trip_id,)).fetchall()]
+        ph = ",".join("?" * len(ids))
+        cur = db.execute(f"DELETE FROM trips WHERE id IN ({ph})", ids)
+        db.execute(f"DELETE FROM trip_positions WHERE trip_id IN ({ph})", ids)
+        db.commit()
+        return cur.rowcount > 0
 
 
 # ── Phase 2: per-trip EC (driving) energy enrichment ─────────────────────────
@@ -4878,17 +4837,17 @@ def get_trips_needing_ec(cutoff_iso: str, limit: int = 5, min_age_s: int = 600,
     now = datetime.now(timezone.utc)
     not_after = (now - timedelta(seconds=min_age_s)).isoformat()      # ended_at <= this (old enough)
     not_before = (now - timedelta(seconds=giveup_age_s)).isoformat()  # ended_at >= this (not too old)
-    db = _conn_rw()
-    rows = db.execute(
-        """SELECT id, started_at, ended_at, distance_km, ec_kwh,
-                  efficiency_kwh_100km, efficiency_soc, start_soc, end_soc FROM trips
-           WHERE vehicle_id = COALESCE(?, vehicle_id) AND merged_into_id IS NULL AND ended_at IS NOT NULL
-             AND started_at >= ? AND ended_at <= ? AND ended_at >= ?
-             AND COALESCE(ec_stable, 0) = 0 AND COALESCE(ec_tried, 0) < 80 AND distance_km > 0
-             AND COALESCE(reconstructed, 0) = 0
-           ORDER BY started_at DESC LIMIT ?""",
-        (_current_vehicle_id(), cutoff_iso, not_after, not_before, int(limit))).fetchall()
-    return [dict(r) for r in rows]
+    with _conn_rw() as db:
+        rows = db.execute(
+            """SELECT id, started_at, ended_at, distance_km, ec_kwh,
+                      efficiency_kwh_100km, efficiency_soc, start_soc, end_soc FROM trips
+               WHERE vehicle_id = COALESCE(?, vehicle_id) AND merged_into_id IS NULL AND ended_at IS NOT NULL
+                 AND started_at >= ? AND ended_at <= ? AND ended_at >= ?
+                 AND COALESCE(ec_stable, 0) = 0 AND COALESCE(ec_tried, 0) < 80 AND distance_km > 0
+                 AND COALESCE(reconstructed, 0) = 0
+               ORDER BY started_at DESC LIMIT ?""",
+            (_current_vehicle_id(), cutoff_iso, not_after, not_before, int(limit))).fetchall()
+        return [dict(r) for r in rows]
 
 
 def store_trip_ec(trip_id: int, ec: Optional[dict], distance_km, apply_energy: bool,
@@ -4897,53 +4856,53 @@ def store_trip_ec(trip_id: int, ec: Optional[dict], distance_km, apply_energy: b
     (overwriting any earlier partial read), back up the SoC efficiency once, and (if apply_energy)
     override efficiency_kwh_100km with the EC-derived value. `stable=True` locks the trip
     (ec_stable=1) so the sweep stops re-fetching it."""
-    db = _conn_rw()
-    if not ec:
-        db.execute("UPDATE trips SET ec_tried = COALESCE(ec_tried, 0) + 1 WHERE id=?", (trip_id,))
-        db.commit()
-        return
-    drv, ac, oth, tot = ec.get("driving_kwh"), ec.get("ac_kwh"), ec.get("other_kwh"), ec.get("total_kwh")
-    db.execute(
-        """UPDATE trips SET ec_tried = COALESCE(ec_tried, 0) + 1,
-               ec_kwh=?, ec_driving=?, ec_ac=?, ec_other=?, ec_stable=?
-           WHERE id=?""",
-        (tot, drv, ac, oth, 1 if stable else 0, trip_id))
-    # Override the trip's energy/efficiency only once the EC is STABLE — a fresh trip's cloud value
-    # is written incrementally, so applying an early partial read would show a wrong figure. Back up
-    # the SoC efficiency at the same moment so the override stays exactly reversible.
-    if apply_energy and stable and tot and distance_km and distance_km > 0:
-        # REEV: never let getEC (electric energy spread over the FULL distance) become the trip's
-        # efficiency when the range-extender ran — that's exactly the diluted ~0.5 figure we suppress
-        # (beta #10). The AND-NOT self-gates to REEV engine-on trips; BEV/pure-EV trips override as before.
+    with _conn_rw() as db:
+        if not ec:
+            db.execute("UPDATE trips SET ec_tried = COALESCE(ec_tried, 0) + 1 WHERE id=?", (trip_id,))
+            db.commit()
+            return
+        drv, ac, oth, tot = ec.get("driving_kwh"), ec.get("ac_kwh"), ec.get("other_kwh"), ec.get("total_kwh")
         db.execute(
-            """UPDATE trips SET efficiency_soc = COALESCE(efficiency_soc, efficiency_kwh_100km),
-                   efficiency_kwh_100km=? WHERE id=?
-               AND NOT (fuel_start_pct IS NOT NULL AND fuel_end_pct IS NOT NULL
-                        AND fuel_start_pct - fuel_end_pct > ?)""",
-            (round(tot / distance_km * 100, 1), trip_id, _REEV_FUEL_MIN_DROP))
-    db.commit()
+            """UPDATE trips SET ec_tried = COALESCE(ec_tried, 0) + 1,
+                   ec_kwh=?, ec_driving=?, ec_ac=?, ec_other=?, ec_stable=?
+               WHERE id=?""",
+            (tot, drv, ac, oth, 1 if stable else 0, trip_id))
+        # Override the trip's energy/efficiency only once the EC is STABLE — a fresh trip's cloud value
+        # is written incrementally, so applying an early partial read would show a wrong figure. Back up
+        # the SoC efficiency at the same moment so the override stays exactly reversible.
+        if apply_energy and stable and tot and distance_km and distance_km > 0:
+            # REEV: never let getEC (electric energy spread over the FULL distance) become the trip's
+            # efficiency when the range-extender ran — that's exactly the diluted ~0.5 figure we suppress
+            # (beta #10). The AND-NOT self-gates to REEV engine-on trips; BEV/pure-EV trips override as before.
+            db.execute(
+                """UPDATE trips SET efficiency_soc = COALESCE(efficiency_soc, efficiency_kwh_100km),
+                       efficiency_kwh_100km=? WHERE id=?
+                   AND NOT (fuel_start_pct IS NOT NULL AND fuel_end_pct IS NOT NULL
+                            AND fuel_start_pct - fuel_end_pct > ?)""",
+                (round(tot / distance_km * 100, 1), trip_id, _REEV_FUEL_MIN_DROP))
+        db.commit()
 
 
 def apply_ec_trip_energy() -> int:
     """Flag ON: make EC the energy for every trip that has EC data (backing up SoC first)."""
-    db = _conn_rw()
-    cur = db.execute(
-        """UPDATE trips SET efficiency_soc = COALESCE(efficiency_soc, efficiency_kwh_100km),
-               efficiency_kwh_100km = ROUND(ec_kwh / distance_km * 100, 1)
-           WHERE ec_kwh IS NOT NULL AND ec_stable = 1 AND distance_km > 0
-             AND NOT (fuel_start_pct IS NOT NULL AND fuel_end_pct IS NOT NULL
-                      AND fuel_start_pct - fuel_end_pct > ?)""", (_REEV_FUEL_MIN_DROP,))
-    db.commit()
-    return cur.rowcount
+    with _conn_rw() as db:
+        cur = db.execute(
+            """UPDATE trips SET efficiency_soc = COALESCE(efficiency_soc, efficiency_kwh_100km),
+                   efficiency_kwh_100km = ROUND(ec_kwh / distance_km * 100, 1)
+               WHERE ec_kwh IS NOT NULL AND ec_stable = 1 AND distance_km > 0
+                 AND NOT (fuel_start_pct IS NOT NULL AND fuel_end_pct IS NOT NULL
+                          AND fuel_start_pct - fuel_end_pct > ?)""", (_REEV_FUEL_MIN_DROP,))
+        db.commit()
+        return cur.rowcount
 
 
 def revert_ec_trip_energy() -> int:
     """Flag OFF: restore the original SoC efficiency for every overridden trip."""
-    db = _conn_rw()
-    cur = db.execute(
-        "UPDATE trips SET efficiency_kwh_100km = efficiency_soc WHERE efficiency_soc IS NOT NULL")
-    db.commit()
-    return cur.rowcount
+    with _conn_rw() as db:
+        cur = db.execute(
+            "UPDATE trips SET efficiency_kwh_100km = efficiency_soc WHERE efficiency_soc IS NOT NULL")
+        db.commit()
+        return cur.rowcount
 
 
 def revert_trip_ec(trip_id: int) -> bool:
@@ -4953,25 +4912,25 @@ def revert_trip_ec(trip_id: int) -> bool:
     (see get_trips_needing_ec: `ec_tried < 80`) so the background sweep won't silently re-convert a
     trip the user explicitly reverted — a manual Convert still works (convert_trip ignores ec_tried).
     Only touches trips that were actually converted (efficiency_soc set). Returns True if reverted."""
-    db = _conn_rw()
-    cur = db.execute(
-        """UPDATE trips
-              SET efficiency_kwh_100km = COALESCE(efficiency_soc, efficiency_kwh_100km),
-                  ec_kwh = NULL, ec_driving = NULL, ec_ac = NULL, ec_other = NULL,
-                  ec_stable = 0, ec_tried = 80
-            WHERE id = ? AND efficiency_soc IS NOT NULL""",
-        (trip_id,))
-    db.commit()
-    return cur.rowcount > 0
+    with _conn_rw() as db:
+        cur = db.execute(
+            """UPDATE trips
+                  SET efficiency_kwh_100km = COALESCE(efficiency_soc, efficiency_kwh_100km),
+                      ec_kwh = NULL, ec_driving = NULL, ec_ac = NULL, ec_other = NULL,
+                      ec_stable = 0, ec_tried = 80
+                WHERE id = ? AND efficiency_soc IS NOT NULL""",
+            (trip_id,))
+        db.commit()
+        return cur.rowcount > 0
 
 
 def delete_charge(charge_id: int) -> bool:
     """Permanently remove a charge session. Returns True if one was deleted. Day/month/lifetime
     charge totals recompute from the DB automatically. The shared per-poll positions log is untouched."""
-    db = _conn_rw()
-    cur = db.execute("DELETE FROM charges WHERE id=?", (charge_id,))
-    db.commit()
-    return cur.rowcount > 0
+    with _conn_rw() as db:
+        cur = db.execute("DELETE FROM charges WHERE id=?", (charge_id,))
+        db.commit()
+        return cur.rowcount > 0
 
 
 # ── Command responsiveness log (car↔cloud reachability proxy) ────────────────
@@ -5025,9 +4984,7 @@ def _recover_anonymous_commands(db: sqlite3.Connection) -> None:
         return
     if len(cars) == 1:
         db.execute("UPDATE command_log SET vin = ? WHERE vin IS NULL", (cars[0][0],))
-    # `_conn_rw()` hands out a fresh connection every call and nobody closes it, so an uncommitted
-    # write dies with it: without this the badge was right exactly once — the same connection could
-    # see its own pending write — and every later page load found the work undone.
+    # Committed here: left pending, every later page load found the backfill undone.
     db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, '1')",
                (_COMMAND_LOG_BACKFILL_KEY,))
     db.commit()
@@ -5041,15 +4998,15 @@ def log_command(action: str, outcome: str, latency_ms: Optional[int] = None,
     An empty vin writes an anonymous row rather than refusing: the command must never fail because
     of its own diary. Anonymous rows are then left out of the badge — see command_responsiveness."""
     try:
-        db = _conn_rw()
-        _ensure_command_log(db)
-        db.execute(
-            "INSERT INTO command_log (ts, action, outcome, latency_ms, vin) VALUES (?,?,?,?,?)",
-            (datetime.now(timezone.utc).isoformat(), action, outcome, latency_ms,
-             (vin or "").strip() or None))
-        db.execute("DELETE FROM command_log WHERE ts < ?",
-                   ((datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),))
-        db.commit()
+        with _conn_rw() as db:
+            _ensure_command_log(db)
+            db.execute(
+                "INSERT INTO command_log (ts, action, outcome, latency_ms, vin) VALUES (?,?,?,?,?)",
+                (datetime.now(timezone.utc).isoformat(), action, outcome, latency_ms,
+                 (vin or "").strip() or None))
+            db.execute("DELETE FROM command_log WHERE ts < ?",
+                       ((datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),))
+            db.commit()
     except Exception:
         pass
 
@@ -5062,16 +5019,16 @@ def command_responsiveness(last_n: int = 24, min_samples: int = 3) -> dict:
     ALWAYS returns a dict so the badge stays visible — state='unknown' until min_samples commands."""
     rows = []
     try:
-        db = _conn_rw()
-        _ensure_command_log(db)
-        # Only THIS car's commands, and only the rows that carry a car: an anonymous row (written
-        # before the column existed, or by a path with no VIN) belongs to nobody, and counting it
-        # would judge one car on another's coverage.
-        rows = db.execute(
-            "SELECT outcome, latency_ms FROM command_log "
-            "WHERE outcome IN ('confirmed','timeout_car') AND vin IS NOT NULL "
-            "AND lower(vin) = lower(?) ORDER BY id DESC LIMIT ?",
-            (_selected_vin(), last_n)).fetchall()
+        with _conn_rw() as db:
+            _ensure_command_log(db)
+            # Only THIS car's commands, and only the rows that carry a car: an anonymous row (written
+            # before the column existed, or by a path with no VIN) belongs to nobody, and counting it
+            # would judge one car on another's coverage.
+            rows = db.execute(
+                "SELECT outcome, latency_ms FROM command_log "
+                "WHERE outcome IN ('confirmed','timeout_car') AND vin IS NOT NULL "
+                "AND lower(vin) = lower(?) ORDER BY id DESC LIMIT ?",
+                (_selected_vin(), last_n)).fetchall()
     except Exception:
         rows = []
     total = len(rows)
@@ -5547,58 +5504,58 @@ def get_merge_chains(gap_min: int = TRIP_MERGE_GAP_DEFAULT, day=None) -> list[li
 def merge_trips(parent_id: int, child_id: int, gap_min: int = TRIP_MERGE_GAP_DEFAULT) -> dict:
     """Merge child into parent (the earlier of the two becomes the parent). Re-validates the
     eligibility server-side. Reversible: only sets merged_into_id, nothing is overwritten."""
-    db = _conn_rw()
-    a = db.execute("SELECT * FROM trips WHERE id=? AND merged_into_id IS NULL", (parent_id,)).fetchone()
-    b = db.execute("SELECT * FROM trips WHERE id=? AND merged_into_id IS NULL", (child_id,)).fetchone()
-    if not a or not b:
-        return {"ok": False, "error": "not_found_or_already_merged"}
-    # Two ids, and nothing checked they were the same CAR (#186): merging one car's drive into the
-    # other's puts kilometres and energy inside a trip that never made them — and a merge writes
-    # only the marker, so it looks perfectly tidy. → [[merged-trip-child-keeps-its-own-data]]
-    if a["vehicle_id"] != b["vehicle_id"]:
-        return {"ok": False, "error": "different_car"}
-    a, b = dict(a), dict(b)
-    if (a.get("started_at") or "") > (b.get("started_at") or ""):
-        a, b = b, a                                   # parent = earlier trip
-    kids = _children_by_parent(db)
-    a_grp = _trip_group_stats(a, kids.get(a["id"], []))
-    gap = _gap_minutes(a_grp.get("ended_at"), b.get("started_at"))
-    if gap is None or gap < 0:
-        return {"ok": False, "error": "gap_too_large"}
-    if gap >= gap_min:
-        # Normally a stop ≥ gap_min is a separate trip. EXCEPTION: if the two trips share ONE power-on
-        # (Ready) session — the car was never switched off between them — the cloud bundles them into
-        # one driving session anyway, so allow the merge at ANY gap (the only way to get the official
-        # combined figure). Detected from the real positions.ready log.
-        sess = ready_session(a_grp)
-        if not (sess and b["id"] in sess.get("trip_ids", [])):
+    with _conn_rw() as db:
+        a = db.execute("SELECT * FROM trips WHERE id=? AND merged_into_id IS NULL", (parent_id,)).fetchone()
+        b = db.execute("SELECT * FROM trips WHERE id=? AND merged_into_id IS NULL", (child_id,)).fetchone()
+        if not a or not b:
+            return {"ok": False, "error": "not_found_or_already_merged"}
+        # Two ids, and nothing checked they were the same CAR (#186): merging one car's drive into the
+        # other's puts kilometres and energy inside a trip that never made them — and a merge writes
+        # only the marker, so it looks perfectly tidy. → [[merged-trip-child-keeps-its-own-data]]
+        if a["vehicle_id"] != b["vehicle_id"]:
+            return {"ok": False, "error": "different_car"}
+        a, b = dict(a), dict(b)
+        if (a.get("started_at") or "") > (b.get("started_at") or ""):
+            a, b = b, a                                   # parent = earlier trip
+        kids = _children_by_parent(db)
+        a_grp = _trip_group_stats(a, kids.get(a["id"], []))
+        gap = _gap_minutes(a_grp.get("ended_at"), b.get("started_at"))
+        if gap is None or gap < 0:
             return {"ok": False, "error": "gap_too_large"}
-    if (a_grp.get("end_soc") is not None and b.get("start_soc") is not None
-            and b["start_soc"] > a_grp["end_soc"]):
-        return {"ok": False, "error": "soc_rose_charge_in_gap"}
-    # absorb B and any of B's own children into A (flatten the chain so all point to A)
-    db.execute("UPDATE trips SET merged_into_id=? WHERE id=? OR merged_into_id=?",
-               (a["id"], b["id"], b["id"]))
-    db.commit()
-    return {"ok": True, "parent_id": a["id"]}
+        if gap >= gap_min:
+            # Normally a stop ≥ gap_min is a separate trip. EXCEPTION: if the two trips share ONE power-on
+            # (Ready) session — the car was never switched off between them — the cloud bundles them into
+            # one driving session anyway, so allow the merge at ANY gap (the only way to get the official
+            # combined figure). Detected from the real positions.ready log.
+            sess = ready_session(a_grp)
+            if not (sess and b["id"] in sess.get("trip_ids", [])):
+                return {"ok": False, "error": "gap_too_large"}
+        if (a_grp.get("end_soc") is not None and b.get("start_soc") is not None
+                and b["start_soc"] > a_grp["end_soc"]):
+            return {"ok": False, "error": "soc_rose_charge_in_gap"}
+        # absorb B and any of B's own children into A (flatten the chain so all point to A)
+        db.execute("UPDATE trips SET merged_into_id=? WHERE id=? OR merged_into_id=?",
+                   (a["id"], b["id"], b["id"]))
+        db.commit()
+        return {"ok": True, "parent_id": a["id"]}
 
 
 def unmerge_trip(parent_id: int) -> dict:
     """Split a merged group back into its original trips — clears merged_into_id on every child.
     All rows were untouched, so they reappear exactly as before."""
-    db = _conn_rw()
-    cur = db.execute("UPDATE trips SET merged_into_id=NULL WHERE merged_into_id=?", (parent_id,))
-    # The parent may hold the COMBINED cloud EC (from a convert-on-merge); once split it no longer
-    # matches the standalone trip → drop it and restore the SoC efficiency (the user can re-convert
-    # the standalone trip). Only touches a parent that actually carries an EC override.
-    # Imported cloud energy is original data, not a convert-on-merge override.
-    if parent_id not in _cloud_trip_ids(db):
-        db.execute(
-            "UPDATE trips SET efficiency_kwh_100km=COALESCE(efficiency_soc, efficiency_kwh_100km), "
-            "efficiency_soc=NULL, ec_kwh=NULL, ec_driving=NULL, ec_ac=NULL, ec_other=NULL, ec_stable=0 "
-            "WHERE id=? AND ec_kwh IS NOT NULL", (parent_id,))
-    db.commit()
-    return {"ok": True, "restored": cur.rowcount}
+    with _conn_rw() as db:
+        cur = db.execute("UPDATE trips SET merged_into_id=NULL WHERE merged_into_id=?", (parent_id,))
+        # The parent may hold the COMBINED cloud EC (from a convert-on-merge); once split it no longer
+        # matches the standalone trip → drop it and restore the SoC efficiency (the user can re-convert
+        # the standalone trip). Only touches a parent that actually carries an EC override.
+        # Imported cloud energy is original data, not a convert-on-merge override.
+        if parent_id not in _cloud_trip_ids(db):
+            db.execute(
+                "UPDATE trips SET efficiency_kwh_100km=COALESCE(efficiency_soc, efficiency_kwh_100km), "
+                "efficiency_soc=NULL, ec_kwh=NULL, ec_driving=NULL, ec_ac=NULL, ec_other=NULL, ec_stable=0 "
+                "WHERE id=? AND ec_kwh IS NOT NULL", (parent_id,))
+        db.commit()
+        return {"ok": True, "restored": cur.rowcount}
 
 
 # How far apart two rows may sit and still be one plug-in.
@@ -5632,59 +5589,59 @@ def merge_charges(parent_id: int, child_id: int, gap_min: int = CHARGE_MERGE_GAP
     a trip overlapping it, or a SoC that FELL (the mirror of the trips rule, where a SoC that ROSE
     means a charge in the gap).
     """
-    db = _conn_rw()
-    a = db.execute("SELECT * FROM charges WHERE id=? AND merged_into_id IS NULL "
-                   "AND ended_at IS NOT NULL", (parent_id,)).fetchone()
-    b = db.execute("SELECT * FROM charges WHERE id=? AND merged_into_id IS NULL "
-                   "AND ended_at IS NOT NULL", (child_id,)).fetchone()
-    if not a or not b:
-        return {"ok": False, "error": "not_found_or_already_merged"}
-    if a["vehicle_id"] != b["vehicle_id"]:
-        return {"ok": False, "error": "different_car"}
-    a, b = dict(a), dict(b)
-    if (a.get("started_at") or "") > (b.get("started_at") or ""):
-        a, b = b, a                                   # parent = the earlier row
-    kids = _charge_children_by_parent(db)
-    place_facts = {(r.get('charging_place_id'), r.get('charging_place_rate'))
-                   for r in [a, b, *kids.get(a['id'], []), *kids.get(b['id'], [])]}
-    if len(place_facts) > 1 and any(pid is not None for pid, _ in place_facts):
-        return {"ok": False, "error": "different_charging_place"}
-    a_grp = _charge_group_stats(a, kids.get(a["id"], []))
-    gap = _gap_minutes(a_grp.get("ended_at"), b.get("started_at"))
-    if gap is None or gap < 0 or gap >= gap_min:
-        return {"ok": False, "error": "gap_too_large"}
-    group_ids = [a["id"], b["id"], *(c["id"] for c in kids.get(a["id"], [])),
-                 *(c["id"] for c in kids.get(b["id"], []))]
-    holes = ",".join("?" * len(group_ids))
-    other = db.execute(
-        f"SELECT 1 FROM charges WHERE vehicle_id=? AND ended_at IS NOT NULL "
-        f"AND started_at > ? AND started_at < ? AND id NOT IN ({holes}) LIMIT 1",
-        (a["vehicle_id"], a_grp["ended_at"], b["started_at"], *group_ids)).fetchone()
-    if other:
-        return {"ok": False, "error": "charge_in_gap"}
-    drove = db.execute(
-        "SELECT 1 FROM trips WHERE vehicle_id=? AND started_at <= ? "
-        "AND COALESCE(ended_at, started_at) >= ? LIMIT 1",
-        (a["vehicle_id"], b["started_at"], a_grp["ended_at"])).fetchone()
-    if drove:
-        return {"ok": False, "error": "drove_in_gap"}
-    if (a_grp.get("end_soc") is not None and b.get("start_soc") is not None
-            and b["start_soc"] < a_grp["end_soc"] - _CHARGE_MERGE_SOC_TOLERANCE):
-        return {"ok": False, "error": "drove_in_gap"}
-    # absorb B and any of B's own children into A, so every piece points at the parent
-    db.execute("UPDATE charges SET merged_into_id=? WHERE id=? OR merged_into_id=?",
-               (a["id"], b["id"], b["id"]))
-    db.commit()
-    return {"ok": True, "parent_id": a["id"]}
+    with _conn_rw() as db:
+        a = db.execute("SELECT * FROM charges WHERE id=? AND merged_into_id IS NULL "
+                       "AND ended_at IS NOT NULL", (parent_id,)).fetchone()
+        b = db.execute("SELECT * FROM charges WHERE id=? AND merged_into_id IS NULL "
+                       "AND ended_at IS NOT NULL", (child_id,)).fetchone()
+        if not a or not b:
+            return {"ok": False, "error": "not_found_or_already_merged"}
+        if a["vehicle_id"] != b["vehicle_id"]:
+            return {"ok": False, "error": "different_car"}
+        a, b = dict(a), dict(b)
+        if (a.get("started_at") or "") > (b.get("started_at") or ""):
+            a, b = b, a                                   # parent = the earlier row
+        kids = _charge_children_by_parent(db)
+        place_facts = {(r.get('charging_place_id'), r.get('charging_place_rate'))
+                       for r in [a, b, *kids.get(a['id'], []), *kids.get(b['id'], [])]}
+        if len(place_facts) > 1 and any(pid is not None for pid, _ in place_facts):
+            return {"ok": False, "error": "different_charging_place"}
+        a_grp = _charge_group_stats(a, kids.get(a["id"], []))
+        gap = _gap_minutes(a_grp.get("ended_at"), b.get("started_at"))
+        if gap is None or gap < 0 or gap >= gap_min:
+            return {"ok": False, "error": "gap_too_large"}
+        group_ids = [a["id"], b["id"], *(c["id"] for c in kids.get(a["id"], [])),
+                     *(c["id"] for c in kids.get(b["id"], []))]
+        holes = ",".join("?" * len(group_ids))
+        other = db.execute(
+            f"SELECT 1 FROM charges WHERE vehicle_id=? AND ended_at IS NOT NULL "
+            f"AND started_at > ? AND started_at < ? AND id NOT IN ({holes}) LIMIT 1",
+            (a["vehicle_id"], a_grp["ended_at"], b["started_at"], *group_ids)).fetchone()
+        if other:
+            return {"ok": False, "error": "charge_in_gap"}
+        drove = db.execute(
+            "SELECT 1 FROM trips WHERE vehicle_id=? AND started_at <= ? "
+            "AND COALESCE(ended_at, started_at) >= ? LIMIT 1",
+            (a["vehicle_id"], b["started_at"], a_grp["ended_at"])).fetchone()
+        if drove:
+            return {"ok": False, "error": "drove_in_gap"}
+        if (a_grp.get("end_soc") is not None and b.get("start_soc") is not None
+                and b["start_soc"] < a_grp["end_soc"] - _CHARGE_MERGE_SOC_TOLERANCE):
+            return {"ok": False, "error": "drove_in_gap"}
+        # absorb B and any of B's own children into A, so every piece points at the parent
+        db.execute("UPDATE charges SET merged_into_id=? WHERE id=? OR merged_into_id=?",
+                   (a["id"], b["id"], b["id"]))
+        db.commit()
+        return {"ok": True, "parent_id": a["id"]}
 
 
 def unmerge_charges(parent_id: int) -> dict:
     """Split a merged charge back into the rows the car reported. Nothing was ever overwritten,
     so they come back exactly as they were — including the split figures."""
-    db = _conn_rw()
-    cur = db.execute("UPDATE charges SET merged_into_id=NULL WHERE merged_into_id=?", (parent_id,))
-    db.commit()
-    return {"ok": True, "restored": cur.rowcount}
+    with _conn_rw() as db:
+        cur = db.execute("UPDATE charges SET merged_into_id=NULL WHERE merged_into_id=?", (parent_id,))
+        db.commit()
+        return {"ok": True, "restored": cur.rowcount}
 
 
 def preview_merge(parent_id: int, child_id: int) -> Optional[dict]:
@@ -7291,16 +7248,13 @@ def fuel_blended_price_at(vehicle_id: int, ts: str) -> Optional[float]:
     refuel (engine trips before it stay uncosted, like the battery before its first priced charge).
     Recomputed from history each call (no stored state) → self-corrects when a refuel is added/edited.
     The FUEL twin of blended_price_at."""
-    db = _conn_rw()
-    try:
+    with _conn_rw() as db:
         _ensure_fuel_purchases(db)
         rows = db.execute(
             "SELECT fuel_before_pct, liters, price_per_l FROM fuel_purchases "
             "WHERE (vehicle_id = ? OR vehicle_id IS NULL) AND ts <= ? ORDER BY ts, id",
             (vehicle_id, ts)).fetchall()
         return _fuel_wac_blend([dict(r) for r in rows], reev_tank_l())
-    finally:
-        db.close()
 
 
 def get_adjacent_trips(trip_id: int) -> dict:
@@ -7860,10 +7814,10 @@ def store_point_elevations(elevations_by_id: dict) -> None:
     _interpolate_elevation fills the gaps between. `{}`/None is a no-op."""
     if not elevations_by_id:
         return
-    db = _conn_rw()
-    db.executemany("UPDATE trip_positions SET elevation_m=? WHERE id=?",
-                   [(v, k) for k, v in elevations_by_id.items()])
-    db.commit()
+    with _conn_rw() as db:
+        db.executemany("UPDATE trip_positions SET elevation_m=? WHERE id=?",
+                       [(v, k) for k, v in elevations_by_id.items()])
+        db.commit()
 
 
 def store_trip_elevation(trip_id: int, gain, loss,
@@ -7871,21 +7825,21 @@ def store_trip_elevation(trip_id: int, gain, loss,
     """Record an enrichment attempt. Always bumps elev_tried; with a gain/loss result also stores it
     and marks elev_done=1 so the sweep stops re-fetching. The start/end outside temperatures, when
     present, are written in the same statement (best-effort, independent of the elevation result)."""
-    db = _conn_rw()
-    sets = ["elev_tried = COALESCE(elev_tried, 0) + 1"]
-    params: list = []
-    if gain is not None and loss is not None:
-        sets += ["elevation_gain_m=?", "elevation_loss_m=?", "elev_done=1"]
-        params += [gain, loss]
-    if outside_temp_start_c is not None:
-        sets.append("outside_temp_start_c=?")
-        params.append(outside_temp_start_c)
-    if outside_temp_end_c is not None:
-        sets.append("outside_temp_end_c=?")
-        params.append(outside_temp_end_c)
-    params.append(trip_id)
-    db.execute(f"UPDATE trips SET {', '.join(sets)} WHERE id=?", params)
-    db.commit()
+    with _conn_rw() as db:
+        sets = ["elev_tried = COALESCE(elev_tried, 0) + 1"]
+        params: list = []
+        if gain is not None and loss is not None:
+            sets += ["elevation_gain_m=?", "elevation_loss_m=?", "elev_done=1"]
+            params += [gain, loss]
+        if outside_temp_start_c is not None:
+            sets.append("outside_temp_start_c=?")
+            params.append(outside_temp_start_c)
+        if outside_temp_end_c is not None:
+            sets.append("outside_temp_end_c=?")
+            params.append(outside_temp_end_c)
+        params.append(trip_id)
+        db.execute(f"UPDATE trips SET {', '.join(sets)} WHERE id=?", params)
+        db.commit()
 
 
 def get_charges(limit: int = 50) -> list[dict]:
@@ -8847,10 +8801,10 @@ def generate_trip_auto_note(trip_id: int, provider: str = "", api_key: "str | No
     text = (" ".join(l for l in lines if l) or None)
     if text:
         text = text.strip()[:1000]
-    db = _conn_rw()
-    db.execute("UPDATE trips SET note=? WHERE id=?", (text, parent_id))
-    db.commit()
-    return text
+    with _conn_rw() as db:
+        db.execute("UPDATE trips SET note=? WHERE id=?", (text, parent_id))
+        db.commit()
+        return text
 
 
 _FUEL_NOTE_TOLERANCE_MIN = 20     # how far from the refuel a position may sit and still be "there"
@@ -8892,14 +8846,12 @@ def generate_fuel_auto_note(purchase_id: int, provider: str = "", api_key: "str 
         return None
     if not address:
         return None
-    db = _conn_rw()
     try:
-        db.execute("UPDATE fuel_purchases SET note=? WHERE id=?", (address, purchase_id))
-        db.commit()
+        with _conn_rw() as db:
+            db.execute("UPDATE fuel_purchases SET note=? WHERE id=?", (address, purchase_id))
+            db.commit()
     except sqlite3.Error:
         return None
-    finally:
-        db.close()
     return address
 
 
@@ -8991,10 +8943,10 @@ def generate_charge_auto_note(charge_id: int, provider: str = "", api_key: "str 
     text = (" ".join(l for l in lines if l) or None)
     if text:
         text = text.strip()[:1000]
-    db = _conn_rw()
-    db.execute("UPDATE charges SET note=? WHERE id=?", (text, charge_id))
-    db.commit()
-    return text
+    with _conn_rw() as db:
+        db.execute("UPDATE charges SET note=? WHERE id=?", (text, charge_id))
+        db.commit()
+        return text
 
 
 def _charge_active_window(db, started_at, ended_at):
@@ -10204,118 +10156,118 @@ def scan_missed_charges(threshold: float = 2.0, apply: bool = False) -> list[dic
     use that exception: their generator can explain a battery gain while out of contact.
     As with offline_gaps, the interval bounds the silence, not the exact charging time, and
     the net SoC gain cannot recover energy spent driving inside it."""
-    db = _conn_rw() if apply else _get()
-    # See get_vehicle(): an unordered LIMIT 1 rides the UNIQUE(vin) covering index and can name
-    # the wrong car — and with apply=True this INSERTS charges, so it would file reconstructed
-    # sessions against the other vehicle.
-    vehicle_id = _current_vehicle_id()
-    if vehicle_id is None:
-        return []
-    rows = db.execute(
-        "SELECT recorded_at, soc, charging, speed_kmh, gear, frame_ts, odometer_km, latitude, longitude "
-        "FROM positions WHERE vehicle_id=? ORDER BY recorded_at, id",
-        (vehicle_id,)).fetchall()
-    # A re-served frame is not a new observation. Keep when it FIRST arrived, like the recorder's
-    # last-fresh baseline for offline kilometres. Never bridge a fresh intermediate frame (even
-    # one lacking SoC), or collapse inconsistent payloads merely because their clock is stuck.
-    observations = []
-    frame_fields = ("frame_ts", "soc", "odometer_km", "speed_kmh", "gear", "charging")
-    for row in rows:
-        if (observations and row["frame_ts"]
-                and all(row[k] == observations[-1][k] for k in frame_fields)):
-            continue
-        observations.append(row)
-    rows = observations
-    charges = db.execute(
-        "SELECT started_at, ended_at FROM charges WHERE vehicle_id=?", (vehicle_id,)).fetchall()
-    cap = get_battery_capacity_kwh()
-    allow_offline = not is_reev_car()
-
-    def _parked(r):
-        return (r["charging"] or 0) == 0 and (r["speed_kmh"] or 0) <= 1
-
-    def _odo_same(a, b):
-        # A missing odometer proves nothing about the car standing still.
-        oa, ob = a["odometer_km"], b["odometer_km"]
-        return oa is not None and ob is not None and abs(ob - oa) < 0.5
-
-    def _rising(a, b):
-        return a["soc"] is not None and b["soc"] is not None and b["soc"] > a["soc"]
-
-    def _overlaps(start, end):
-        for c in charges:
-            cs, ce = c["started_at"], (c["ended_at"] or "9999")   # NULL end = open-ended
-            if start <= ce and cs <= end:                          # inclusive interval overlap
-                return True
-        return False
-
-    candidates, i, n = [], 0, len(rows)
-
-    def _next_soc(k):
-        """The next frame the parked scan may compare against.
-
-        Frames the cloud gave no SoC for used to be excluded by the query itself. They are kept
-        now because the offline exception must SEE them — a fresh frame without SoC still proves
-        the car was in contact — but a parked rise observed across one must stay ONE charge.
-        """
-        while k < n and rows[k]["soc"] is None:
-            k += 1
-        return k
-
-    while i < n - 1:
-        a, b = rows[i], rows[i + 1]
-        k = _next_soc(i + 1)
-        rise_to = rows[k] if k < n else None
-        parked_rise = (rise_to is not None and _rising(a, rise_to) and _parked(a)
-                       and _parked(rise_to) and _odo_same(a, rise_to))
-        if not (parked_rise or (allow_offline and _scan_offline_charge(a, b, cap))):
-            i += 1
-            continue
-        # Extend the run while SoC keeps rising, parked, and the odometer never moves —
-        # so one charge seen across several stale polls becomes ONE candidate, not many.
-        run_start, run_end, j = (a, rise_to, k) if parked_rise else (a, b, i + 1)
-        while parked_rise and j < n - 1:
-            c, m = rows[j], _next_soc(j + 1)
-            if m >= n:
-                break
-            d = rows[m]
-            if _rising(c, d) and _parked(c) and _parked(d) and _odo_same(run_start, d):
-                run_end, j = d, m
-            else:
-                break
-        rise = run_end["soc"] - run_start["soc"]
-        if rise >= threshold and run_start["soc"] >= 1.0 and not _overlaps(run_start["recorded_at"], run_end["recorded_at"]):
-            try:
-                dur = round((datetime.fromisoformat(run_end["recorded_at"])
-                             - datetime.fromisoformat(run_start["recorded_at"])).total_seconds() / 60, 1)
-            except (TypeError, ValueError):
-                dur = None
-            # Plausibility: a spurious SoC=0/low reading makes a "charge" of impossible power (a full
-            # pack in seconds). Skip runs whose implied rate exceeds any real charger; keep when the
-            # duration is unknown (start_soc>=1 already filters the zero-start glitch).
-            implied_kw = (rise / 100.0 * cap) / (dur / 60.0) if dur and dur > 0 else None
-            if implied_kw is not None and implied_kw > _SCAN_MAX_KW:
-                i = j + 1
+    with (_conn_rw() if apply else contextlib.nullcontext(_get())) as db:
+        # See get_vehicle(): an unordered LIMIT 1 rides the UNIQUE(vin) covering index and can name
+        # the wrong car — and with apply=True this INSERTS charges, so it would file reconstructed
+        # sessions against the other vehicle.
+        vehicle_id = _current_vehicle_id()
+        if vehicle_id is None:
+            return []
+        rows = db.execute(
+            "SELECT recorded_at, soc, charging, speed_kmh, gear, frame_ts, odometer_km, latitude, longitude "
+            "FROM positions WHERE vehicle_id=? ORDER BY recorded_at, id",
+            (vehicle_id,)).fetchall()
+        # A re-served frame is not a new observation. Keep when it FIRST arrived, like the recorder's
+        # last-fresh baseline for offline kilometres. Never bridge a fresh intermediate frame (even
+        # one lacking SoC), or collapse inconsistent payloads merely because their clock is stuck.
+        observations = []
+        frame_fields = ("frame_ts", "soc", "odometer_km", "speed_kmh", "gear", "charging")
+        for row in rows:
+            if (observations and row["frame_ts"]
+                    and all(row[k] == observations[-1][k] for k in frame_fields)):
                 continue
-            candidates.append({
-                "started_at": run_start["recorded_at"], "ended_at": run_end["recorded_at"],
-                "start_soc": run_start["soc"], "end_soc": run_end["soc"],
-                "energy_kwh": round(max(rise / 100.0 * cap, 0), 3), "duration_min": dur,
-                "latitude": run_end["latitude"], "longitude": run_end["longitude"],
-            })
-        i = j + 1
+            observations.append(row)
+        rows = observations
+        charges = db.execute(
+            "SELECT started_at, ended_at FROM charges WHERE vehicle_id=?", (vehicle_id,)).fetchall()
+        cap = get_battery_capacity_kwh()
+        allow_offline = not is_reev_car()
 
-    if apply and candidates:
-        for c in candidates:
-            db.execute(
-                """INSERT INTO charges
-                   (vehicle_id, started_at, ended_at, start_soc, end_soc, energy_added_kwh,
-                    duration_min, latitude, longitude, charge_type, reconstructed)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
-                (vehicle_id, c["started_at"], c["ended_at"], c["start_soc"], c["end_soc"],
-                 c["energy_kwh"], c["duration_min"], c["latitude"], c["longitude"], "AC"))
-        db.commit()
-    return candidates
+        def _parked(r):
+            return (r["charging"] or 0) == 0 and (r["speed_kmh"] or 0) <= 1
+
+        def _odo_same(a, b):
+            # A missing odometer proves nothing about the car standing still.
+            oa, ob = a["odometer_km"], b["odometer_km"]
+            return oa is not None and ob is not None and abs(ob - oa) < 0.5
+
+        def _rising(a, b):
+            return a["soc"] is not None and b["soc"] is not None and b["soc"] > a["soc"]
+
+        def _overlaps(start, end):
+            for c in charges:
+                cs, ce = c["started_at"], (c["ended_at"] or "9999")   # NULL end = open-ended
+                if start <= ce and cs <= end:                          # inclusive interval overlap
+                    return True
+            return False
+
+        candidates, i, n = [], 0, len(rows)
+
+        def _next_soc(k):
+            """The next frame the parked scan may compare against.
+
+            Frames the cloud gave no SoC for used to be excluded by the query itself. They are kept
+            now because the offline exception must SEE them — a fresh frame without SoC still proves
+            the car was in contact — but a parked rise observed across one must stay ONE charge.
+            """
+            while k < n and rows[k]["soc"] is None:
+                k += 1
+            return k
+
+        while i < n - 1:
+            a, b = rows[i], rows[i + 1]
+            k = _next_soc(i + 1)
+            rise_to = rows[k] if k < n else None
+            parked_rise = (rise_to is not None and _rising(a, rise_to) and _parked(a)
+                           and _parked(rise_to) and _odo_same(a, rise_to))
+            if not (parked_rise or (allow_offline and _scan_offline_charge(a, b, cap))):
+                i += 1
+                continue
+            # Extend the run while SoC keeps rising, parked, and the odometer never moves —
+            # so one charge seen across several stale polls becomes ONE candidate, not many.
+            run_start, run_end, j = (a, rise_to, k) if parked_rise else (a, b, i + 1)
+            while parked_rise and j < n - 1:
+                c, m = rows[j], _next_soc(j + 1)
+                if m >= n:
+                    break
+                d = rows[m]
+                if _rising(c, d) and _parked(c) and _parked(d) and _odo_same(run_start, d):
+                    run_end, j = d, m
+                else:
+                    break
+            rise = run_end["soc"] - run_start["soc"]
+            if rise >= threshold and run_start["soc"] >= 1.0 and not _overlaps(run_start["recorded_at"], run_end["recorded_at"]):
+                try:
+                    dur = round((datetime.fromisoformat(run_end["recorded_at"])
+                                 - datetime.fromisoformat(run_start["recorded_at"])).total_seconds() / 60, 1)
+                except (TypeError, ValueError):
+                    dur = None
+                # Plausibility: a spurious SoC=0/low reading makes a "charge" of impossible power (a full
+                # pack in seconds). Skip runs whose implied rate exceeds any real charger; keep when the
+                # duration is unknown (start_soc>=1 already filters the zero-start glitch).
+                implied_kw = (rise / 100.0 * cap) / (dur / 60.0) if dur and dur > 0 else None
+                if implied_kw is not None and implied_kw > _SCAN_MAX_KW:
+                    i = j + 1
+                    continue
+                candidates.append({
+                    "started_at": run_start["recorded_at"], "ended_at": run_end["recorded_at"],
+                    "start_soc": run_start["soc"], "end_soc": run_end["soc"],
+                    "energy_kwh": round(max(rise / 100.0 * cap, 0), 3), "duration_min": dur,
+                    "latitude": run_end["latitude"], "longitude": run_end["longitude"],
+                })
+            i = j + 1
+
+        if apply and candidates:
+            for c in candidates:
+                db.execute(
+                    """INSERT INTO charges
+                       (vehicle_id, started_at, ended_at, start_soc, end_soc, energy_added_kwh,
+                        duration_min, latitude, longitude, charge_type, reconstructed)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+                    (vehicle_id, c["started_at"], c["ended_at"], c["start_soc"], c["end_soc"],
+                     c["energy_kwh"], c["duration_min"], c["latitude"], c["longitude"], "AC"))
+            db.commit()
+        return candidates
 
 
 _SOH_TOP_CUTOFF_SOC = 95.0    # above this the BMS re-anchors an LFP's counted SoC: points arrive
