@@ -6745,7 +6745,7 @@ def apply_setup_vehicles(cars: list[dict]) -> int:
             db_reader.set_vehicle_capacity(vin, kwh)
         pin = (car.get("pin") or "").strip()
         if pin:
-            db_reader.set_secret(f"leapmotor_pin_{key}", pin)
+            db_reader.set_operate_pin(pin, vin)
         db_reader.set_setting(f"is_reev_{key}",
                               "1" if str(car.get("is_reev")) in ("1", "on", "true") else "0")
         db_reader.set_setting(f"vehicle_setup_done_{key}", "1")
