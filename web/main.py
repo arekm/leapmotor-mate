@@ -4643,11 +4643,9 @@ async def set_operation_pin(request: Request):
     Typed twice, like the access password (#214 @rop12770): a PIN stored with a typo fails at the
     car, hours later, with an error that says nothing about which digit was wrong.
 
-    ⚠️ Nothing else has to be poked. The stored secret beats `LEAPMOTOR_PIN` in both readers, the web
-    command session is dropped here so the next command re-authenticates, and the poller already
-    compares (user, pass, PIN) against the ones it started with on every cycle and exits with 42 for
-    run.sh to relaunch it. That watcher was written for the account switch; a PIN change is the same
-    shape and it was already covered."""
+    The PIN is set on the car, so it is always one car's: the form names the car, the one the
+    Vehicle card shows unless a second car is picked. Both processes read a car's PIN at each
+    command; the web command session is dropped here too."""
     form = await request.form()
     pin = ((form.get("pin") or "") if isinstance(form.get("pin"), str) else "").strip()
     pin2 = ((form.get("pin2") or "") if isinstance(form.get("pin2"), str) else "").strip()
@@ -4656,21 +4654,16 @@ async def set_operation_pin(request: Request):
         return Response("empty", status_code=422)
     if pin2 != pin:
         return Response("mismatch", status_code=422)
-    # A `vin` means "this car's own PIN" (#186, @cookingeek): two Leapmotors on one account can want
-    # different four digits, and the commands are the only thing that would notice. A VIN we do not
-    # have is refused rather than stored, so a stale form cannot mint a secret for a phantom car.
-    if vin:
-        if not any(v.get("vin") == vin for v in db_reader.get_vehicles()):
-            return Response("unknown vin", status_code=422)
-        db_reader.set_operate_pin(pin, vin)
-        # Giving a car its own PIN is somebody looking at that car, so it answers the "never set up"
-        # strip too. It matters for a car whose model default happens to be right: there is nothing
-        # to change in the capacity box, and without this the strip could not be cleared at all
-        # except by walking the wizard again (@cookingeek set a separate PIN and kept the strip).
-        db_reader.mark_vehicle_configured(vin)
-        command_client._session._reset()
-        return Response(status_code=204, headers={"HX-Refresh": "true"})
-    db_reader.set_secret("leapmotor_pin", pin)
+    # Two Leapmotors on one account can want different four digits (#186, @cookingeek). A missing or
+    # unknown VIN is refused rather than guessed, so a stale form cannot store a PIN on the wrong car.
+    if not any(v.get("vin") == vin for v in db_reader.get_vehicles()):
+        return Response("unknown vin", status_code=422)
+    db_reader.set_operate_pin(pin, vin)
+    # Giving a car its PIN is somebody looking at that car, so it answers the "never set up" strip
+    # too. It matters for a car whose model default happens to be right: there is nothing to change
+    # in the capacity box, and without this the strip could not be cleared at all except by walking
+    # the wizard again (@cookingeek set a separate PIN and kept the strip).
+    db_reader.mark_vehicle_configured(vin)
     command_client._session._reset()
     return Response(status_code=204, headers={"HX-Refresh": "true"})
 
@@ -4684,7 +4677,9 @@ async def account_logout(request: Request):
     container restart); history is keyed by VIN, so the same car's records carry over."""
     db_reader.set_setting("leapmotor_user", "")
     db_reader.set_secret("leapmotor_pass", "")
-    db_reader.set_secret("leapmotor_pin", "")
+    for v in db_reader.get_vehicles():
+        db_reader.set_operate_pin("", v.get("vin") or "")
+    db_reader.set_secret("leapmotor_pin", "")    # one still waiting for its car
     db_reader.set_setting("setup_complete", "0")
     command_client._session._reset()          # drop the web command session too
     resp = Response(status_code=204)
@@ -6790,7 +6785,6 @@ async def setup_submit(request: Request):
 
     db_reader.set_setting("leapmotor_user", user)
     db_reader.set_secret("leapmotor_pass", pwd)
-    db_reader.set_secret("leapmotor_pin", pin)
     db_reader.set_setting("battery_capacity_kwh", str(battery_kwh))
     db_reader.set_setting("is_reev", is_reev)   # REEV variant selected in the wizard → gates fuel features
     db_reader.set_setting("language", lang if lang in ("en", "it", "fr", "de", "pl", "pt-PT", "nl", "es") else "en")
@@ -6800,10 +6794,10 @@ async def setup_submit(request: Request):
     db_reader.set_timezone(tz or db_reader.detected_tz_name())
     db_reader.set_setting(db_reader.TZ_PINNED_KEY, "1")
 
-    # Every car the wizard found, each with its OWN pack, range-extender answer and PIN. The
-    # account-wide values written above stay for the single-car install and as the fallback the rest
-    # of the code already knows; these are what a two-car account needs, and what it never had —
-    # before this, car number two was left to the poller and took its model's default.
+    # Every car the wizard found, each with its OWN pack, range-extender answer and PIN (the PIN is
+    # set on the car, so it is only ever stored per car). The account-wide pack and range-extender
+    # values written above stay for the single-car install and as the fallback the rest of the code
+    # already knows; before this, car number two was left to the poller and took its model's default.
     try:
         _cars = json.loads(form.get("vehicles_json") or "[]")
     except (TypeError, ValueError):
@@ -6812,6 +6806,9 @@ async def setup_submit(request: Request):
         _cars = [{"vin": vin, "car_type": car_type, "battery": str(battery_kwh),
                   "is_reev": is_reev, "pin": pin}]
     apply_setup_vehicles(_cars)
+    # Only the cars found take a PIN (with none, the page has said to set it in Settings → Vehicle),
+    # and an older install-wide PIN must never come back to a car after this.
+    db_reader.set_secret("leapmotor_pin", "")
 
     # Completing setup cancels any pending factory reset: the user has intentionally configured
     # this install, so a stray marker (e.g. if a reset's relaunch never fired) must never wipe it.

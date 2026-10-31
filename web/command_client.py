@@ -141,7 +141,7 @@ def _get_credentials() -> tuple[str, str, str]:
         import db_reader as _dr
         user = _dr.get_account_user()   # same precedence, one definition (Settings shows it too)
         pwd  = _dr.get_secret("leapmotor_pass") or os.environ.get("LEAPMOTOR_PASS", "")
-        pin  = _dr.get_secret("leapmotor_pin")  or os.environ.get("LEAPMOTOR_PIN", "")
+        pin  = os.environ.get("LEAPMOTOR_PIN", "")   # a command takes its car's own (_use_pin_of)
     except Exception:
         user = os.environ.get("LEAPMOTOR_USER", "")
         pwd  = os.environ.get("LEAPMOTOR_PASS", "")
@@ -305,16 +305,13 @@ class LeapmotorSession:
 
         Set per command rather than once at login: the session is built once and the user can change
         the selected car under it, so a PIN frozen at connection time would send car A's four digits
-        with car B's command. Silent by design when there is nothing per-car stored — the reader
-        falls back to the install-wide PIN, which is what every install has today.
+        with car B's command. A car without a PIN gets none, so the command says so instead of
+        carrying the PIN an earlier command left in the session.
         """
-        try:
-            import db_reader as _dr
-            pin = _dr.get_operate_pin(vin)
-        except Exception:                     # noqa: BLE001 — never let this break a command
-            return
-        if pin:
-            self._api.operation_password = pin
+        import db_reader as _dr
+        pin = _dr.get_operate_pin(vin)        # a failed read refuses the command in _execute_inner
+        self._api.operation_password = pin
+        return bool(pin)
 
     def _connect(self):
         if self._api is not None:
@@ -388,14 +385,17 @@ class LeapmotorSession:
 
     def _execute_inner(self, action_fn) -> tuple[bool, str]:
         with self._lock:
+            # Before any early return: the last command's refusal would be recorded against this one.
+            self.last_refusal = None
             try:
                 self._connect()
                 target = self._target()
                 if target is None:
                     return False, "No vehicle selected"
-                self._use_pin_of(target.vin)
+                if not self._use_pin_of(target.vin):
+                    return False, (f"No operation PIN for {getattr(target, 'car_type', '') or 'the car'} "
+                                   f"·{target.vin[-6:]}: set it in Settings → Vehicle")
                 self._api.last_new_command_receipt = None
-                self.last_refusal = None
                 action_fn(self._api, target.vin)
                 receipt = self._api.last_new_command_receipt
                 if receipt is None:

@@ -137,7 +137,7 @@
     <!-- PIN -->
     <div>
       <label id="lbl-pin" class="block text-sm font-medium text-slate-300 mb-1.5">
-        Operation PIN
+        Operation PIN (set on the car)
       </label>
       <div class="relative">
         <input type="password" name="pin" required maxlength="4"
@@ -220,7 +220,8 @@ const strings = {
     email:         "Leapmotor account email",
     emailPh:       "you@example.com",
     password:      "Password",
-    pin:           "Operation PIN",
+    pin:           "Operation PIN (set on the car)",
+    pinPerCar:     "Operation PIN of this car",
     pinPh:         "4-digit PIN",
     tz:            "Time zone",
     tzHint:        "Trips and charges are shown in this zone. Detected: {tz} — change it if that isn't where you are.",
@@ -232,6 +233,7 @@ const strings = {
     batteryHint:   "Select your battery variant",
     batteryAutoSet:"Battery detected (EU spec)",
     detectFail:    "Could not detect vehicle",
+    pinNotSaved:   "With no car detected, the PIN is not saved. Once Mate has found the car, set it in Settings → Vehicle.",
     manualEntry:   "Enter battery capacity manually (kWh)",
     manualHint:    "B10 Pro: 55.0 · B10 Pro Max: 65.0 · B05 Pro: 55.0 · B05 Pro Max: 65.0 · T03: 36.0 · C10 RWD: 67.0 · C10 AWD: 81.9 · B03X 292 km: 39.0 · B03X 382 km: 52.0",
     submit:        "Connect & Start",
@@ -250,7 +252,8 @@ const strings = {
     email:         "Email account Leapmotor",
     emailPh:       "tu@esempio.com",
     password:      "Password",
-    pin:           "PIN operativo",
+    pin:           "PIN operativo (impostato sull'auto)",
+    pinPerCar:     "PIN operativo di questa auto",
     pinPh:         "PIN a 4 cifre",
     tz:            "Fuso orario",
     tzHint:        "Viaggi e ricariche sono mostrati in questo fuso. Rilevato: {tz} — cambialo se non è dove ti trovi.",
@@ -262,6 +265,7 @@ const strings = {
     batteryHint:   "Seleziona la variante batteria",
     batteryAutoSet:"Batteria rilevata (spec. europea)",
     detectFail:    "Impossibile rilevare il veicolo",
+    pinNotSaved:   "Senza un'auto rilevata il PIN non viene salvato. Quando Mate avrà trovato l'auto, inseriscilo in Impostazioni → Veicolo.",
     manualEntry:   "Inserisci la capacità batteria manualmente (kWh)",
     manualHint:    "B10 Pro: 55.0 · B10 Pro Max: 65.0 · B05 Pro: 55.0 · B05 Pro Max: 65.0 · T03: 36.0 · C10 RWD: 67.0 · C10 AWD: 81.9 · B03X 292 km: 39.0 · B03X 382 km: 52.0",
     submit:        "Connetti e avvia",
@@ -280,7 +284,8 @@ const strings = {
     email:         "E-mail du compte Leapmotor",
     emailPh:       "vous@exemple.com",
     password:      "Mot de passe",
-    pin:           "Code PIN d'opération",
+    pin:           "Code PIN d'opération (réglé sur la voiture)",
+    pinPerCar:     "Code PIN d'opération de cette voiture",
     pinPh:         "PIN à 4 chiffres",
     tz:            "Fuseau horaire",
     tzHint:        "Les trajets et les recharges s'affichent dans ce fuseau. Détecté : {tz} — changez-le si ce n'est pas là que vous êtes.",
@@ -292,6 +297,7 @@ const strings = {
     batteryHint:   "Sélectionnez votre variante de batterie",
     batteryAutoSet:"Batterie détectée (spéc. UE)",
     detectFail:    "Impossible de détecter le véhicule",
+    pinNotSaved:   "Sans voiture détectée, le code PIN n'est pas enregistré. Quand Mate aura trouvé la voiture, saisissez-le dans Paramètres → Véhicule.",
     manualEntry:   "Saisir la capacité batterie manuellement (kWh)",
     manualHint:    "B10 Pro: 55.0 · B10 Pro Max: 65.0 · B05 Pro: 55.0 · B05 Pro Max: 65.0 · T03: 36.0 · C10 RWD: 67.0 · C10 AWD: 81.9 · B03X 292 km: 39.0 · B03X 382 km: 52.0",
     submit:        "Connecter et démarrer",
@@ -310,7 +316,8 @@ const strings = {
     email:         "E-Mail des Leapmotor-Kontos",
     emailPh:       "sie@beispiel.com",
     password:      "Passwort",
-    pin:           "Bedien-PIN",
+    pin:           "Bedien-PIN (am Auto eingestellt)",
+    pinPerCar:     "Bedien-PIN dieses Autos",
     pinPh:         "4-stellige PIN",
     tz:            "Zeitzone",
     tzHint:        "Fahrten und Ladevorgänge werden in dieser Zone angezeigt. Erkannt: {tz} — ändern Sie sie, wenn Sie woanders sind.",
@@ -322,6 +329,7 @@ const strings = {
     batteryHint:   "Wählen Sie Ihre Batterievariante",
     batteryAutoSet:"Batterie erkannt (EU-Spezifikation)",
     detectFail:    "Fahrzeug konnte nicht erkannt werden",
+    pinNotSaved:   "Ohne erkanntes Auto wird die PIN nicht gespeichert. Sobald Mate das Auto gefunden hat, geben Sie sie unter Einstellungen → Fahrzeug ein.",
     manualEntry:   "Batteriekapazität manuell eingeben (kWh)",
     manualHint:    "B10 Pro: 55.0 · B10 Pro Max: 65.0 · B05 Pro: 55.0 · B05 Pro Max: 65.0 · T03: 36.0 · C10 RWD: 67.0 · C10 AWD: 81.9 · B03X 292 km: 39.0 · B03X 382 km: 52.0",
     submit:        "Verbinden & starten",
@@ -340,7 +348,8 @@ const strings = {
     email:         "E-mail konta Leapmotor",
     emailPh:       "ty@przyklad.com",
     password:      "Hasło",
-    pin:           "PIN operacyjny",
+    pin:           "PIN operacyjny (ustawiany w aucie)",
+    pinPerCar:     "PIN operacyjny tego auta",
     pinPh:         "4-cyfrowy PIN",
     tz:            "Strefa czasowa",
     tzHint:        "Przejazdy i ładowania są pokazywane w tej strefie. Wykryto: {tz} — zmień, jeśli to nie tam jesteś.",
@@ -352,6 +361,7 @@ const strings = {
     batteryHint:   "Wybierz wariant baterii",
     batteryAutoSet:"Bateria wykryta (specyfikacja UE)",
     detectFail:    "Nie udało się wykryć pojazdu",
+    pinNotSaved:   "Bez wykrytego auta PIN nie zostanie zapisany. Gdy Mate znajdzie auto, wpisz go w Ustawieniach, w sekcji Pojazd.",
     manualEntry:   "Wprowadź pojemność baterii ręcznie (kWh)",
     manualHint:    "B10 Pro: 55.0 · B10 Pro Max: 65.0 · B05 Pro: 55.0 · B05 Pro Max: 65.0 · T03: 36.0 · C10 RWD: 67.0 · C10 AWD: 81.9 · B03X 292 km: 39.0 · B03X 382 km: 52.0",
     submit:        "Połącz i uruchom",
@@ -370,7 +380,8 @@ const strings = {
     email:         "Email da conta Leapmotor",
     emailPh:       "utilizador@exemplo.com",
     password:      "Palavra-passe",
-    pin:           "PIN de operação",
+    pin:           "PIN de operação (definido no carro)",
+    pinPerCar:     "PIN de operação deste carro",
     pinPh:         "PIN de 4 dígitos",
     tz:            "Fuso horário",
     tzHint:        "Viagens e carregamentos são mostrados neste fuso. Detetado: {tz} — altere se não for onde está.",
@@ -382,6 +393,7 @@ const strings = {
     batteryHint:   "Selecione a variante da bateria",
     batteryAutoSet:"Bateria detetada (especificação europeia)",
     detectFail:    "Não foi possível detetar o veículo",
+    pinNotSaved:   "Sem um carro detetado, o PIN não é guardado. Quando o Mate encontrar o carro, defina-o em Definições → Veículo.",
     manualEntry:   "Introduza manualmente a capacidade da bateria (kWh)",
     manualHint:    "B10 Pro: 55.0 · B10 Pro Max: 65.0 · B05 Pro: 55.0 · B05 Pro Max: 65.0 · T03: 36.0 · C10 RWD: 67.0 · C10 AWD: 81.9 · B03X 292 km: 39.0 · B03X 382 km: 52.0",
     submit:        "Ligar e iniciar",
@@ -400,7 +412,8 @@ const strings = {
     email:         "E-mailadres van je Leapmotor-account",
     emailPh:       "jij@voorbeeld.nl",
     password:      "Wachtwoord",
-    pin:           "Bedienings-pincode",
+    pin:           "Bedienings-pincode (ingesteld in de auto)",
+    pinPerCar:     "Bedienings-pincode van deze auto",
     pinPh:         "Pincode van 4 cijfers",
     tz:            "Tijdzone",
     tzHint:        "Ritten en laadbeurten worden in deze zone getoond. Gedetecteerd: {tz} — wijzig het als je daar niet bent.",
@@ -412,6 +425,7 @@ const strings = {
     batteryHint:   "Kies je batterijvariant",
     batteryAutoSet:"Batterij herkend (EU-uitvoering)",
     detectFail:    "Kon het voertuig niet vinden",
+    pinNotSaved:   "Zonder gevonden auto wordt de pincode niet opgeslagen. Zodra Mate de auto heeft gevonden, vul je die in bij Instellingen → Voertuig.",
     manualEntry:   "Batterijcapaciteit met de hand invoeren (kWh)",
     manualHint:    "B10 Pro: 55,0 · B10 Pro Max: 65,0 · B05 Pro: 55,0 · B05 Pro Max: 65,0 · T03: 36,0 · C10 RWD: 67,0 · C10 AWD: 81,9 · B03X 292 km: 39,0 · B03X 382 km: 52,0",
     submit:        "Verbinden en starten",
@@ -430,7 +444,8 @@ const strings = {
     email:         "Correo de la cuenta de Leapmotor",
     emailPh:       "tu@ejemplo.com",
     password:      "Contraseña",
-    pin:           "PIN de operaciones",
+    pin:           "PIN de operaciones (configurado en el coche)",
+    pinPerCar:     "PIN de operaciones de este coche",
     pinPh:         "PIN de 4 dígitos",
     tz:            "Zona horaria",
     tzHint:        "Los trayectos y las cargas se muestran en esta zona. Detectada: {tz} — cámbiala si no es donde estás.",
@@ -442,6 +457,7 @@ const strings = {
     batteryHint:   "Elige tu variante de batería",
     batteryAutoSet:"Batería detectada (versión europea)",
     detectFail:    "No se ha podido detectar el vehículo",
+    pinNotSaved:   "Sin un coche detectado, el PIN no se guarda. Cuando Mate encuentre el coche, introdúcelo en Ajustes → Vehículo.",
     manualEntry:   "Introducir la capacidad de la batería a mano (kWh)",
     manualHint:    "B10 Pro: 55,0 · B10 Pro Max: 65,0 · B05 Pro: 55,0 · B05 Pro Max: 65,0 · T03: 36,0 · C10 RWD: 67,0 · C10 AWD: 81,9 · B03X 292 km: 39,0 · B03X 382 km: 52,0",
     submit:        "Conectar y empezar",
@@ -739,6 +755,7 @@ async function detectCar() {
         <div style="background:#ef444422;border:1px solid #ef444455;border-radius:12px;padding:14px 16px">
           <div style="color:#fca5a5;font-size:13px;font-weight:600;margin-bottom:6px">✗ ${s.detectFail}</div>
           <div style="color:#fca5a5;font-size:12px;opacity:.8;margin-bottom:14px">${data.error || ''}</div>
+          <div style="color:#fbbf24;font-size:12px;margin-bottom:14px">${s.pinNotSaved}</div>
           ${buildManualInput()}
         </div>`);
       document.getElementById('h-battery').value = '';
@@ -801,6 +818,7 @@ async function detectCar() {
         <div style="color:#fca5a5;font-size:13px;font-weight:600;margin-bottom:10px">
           ✗ ${s.detectFail}: ${err.message}
         </div>
+        <div style="color:#fbbf24;font-size:12px;margin-bottom:14px">${s.pinNotSaved}</div>
         ${buildManualInput()}
       </div>`);
     document.getElementById('h-battery').value = '';

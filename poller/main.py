@@ -287,10 +287,11 @@ def _handle_mqtt_command(client, service, db, vin: str, cmd: str, value):
     is why it looked stale/out of sync. B10 commands the cloud accepts-but-ignores
     (e.g. full A/C off) stay best-effort."""
     api = client._api
-    use_pin_of(api, db, vin)     # MQTT is not scoped to a picked car: the topic names the VIN
     optimistic = _MQTT_OPTIMISTIC.get(cmd)
     try:
         with _API_LOCK:  # serialize against the poll loop's get_status (shared HTTP session)
+            # Under the lock: the Ready automation sets the PIN of its own car from the poll loop.
+            use_pin_of(api, db, vin)     # MQTT is not scoped to a picked car: the topic names the VIN
             if cmd == "lock":          api.lock_vehicle(vin)
             elif cmd == "unlock":      api.unlock_vehicle(vin)
             elif cmd == "open_trunk":  api.open_trunk(vin)
@@ -686,7 +687,8 @@ def load_config(db: "Database") -> dict:
     return {
         "username":  _get("LEAPMOTOR_USER", "leapmotor_user"),
         "password":  _get("LEAPMOTOR_PASS", "leapmotor_pass", secret=True),
-        "pin":       _get("LEAPMOTOR_PIN",  "leapmotor_pin", "", secret=True),
+        # A command takes its car's own PIN (Database.get_operate_pin); the session starts with this one.
+        "pin":       os.environ.get("LEAPMOTOR_PIN", ""),
         "cert_path": _cert_path("app.crt", "CERT_PATH"),
         "key_path":  _cert_path("app.key", "KEY_PATH"),
     }
@@ -1355,6 +1357,8 @@ def main():
         vid = db.ensure_vehicle(veh.vin, veh.car_type, getattr(veh, "year", None),
                                 abilities=getattr(veh, "abilities", None))
         contexts.append(VehicleContext(db, veh, vid))
+    # A car registered for the first time takes the install-wide PIN an older install still holds.
+    db.migrate_install_pin()
     # The one-car → two-cars transition is visible HERE and nowhere else, and it is where the
     # install-wide ABRP token stops being safe: from this moment both cars would answer to it and
     # push into a single ABRP vehicle. Hand it to the car that was here first and drop the shared

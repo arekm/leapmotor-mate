@@ -1,6 +1,7 @@
 // The wizard's own JavaScript, run for real: argv[2] is the rendered page script, argv[3] the part
 // to check. "posts": after one detection and another, only the last attempt's cars are submitted,
 // the email is locked while a detection runs, and editing it later forgets the cars found.
+// "note": a failed detection says the PIN is not saved, before setup can be finished by hand.
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
@@ -73,6 +74,18 @@ const parts = {
     const after = await detect(ONE);
     assert.equal(after.vehicles, '', 'two cars, then one: the earlier list would outrank the car just found');
     assert.equal(after.vin, 'LFZB10AAAAAAAAAA1');
+  },
+  async note() {
+    const note = run('strings.en.pinNotSaved');
+    assert.ok(note && note.includes('Settings'), 'the English note must point at Settings');
+    assert.deepEqual([...run('Object.keys(strings).filter(l => !strings[l].pinNotSaved)')], [],
+                     'every language says it');
+    for (const [failure, why] of FAILURES) {
+      el('btn-submit').style.display = 'none';
+      assert.ok((await detect(failure)).html.includes(note), `${why}: no word that the PIN is not saved`);
+      assert.equal(el('btn-submit').style.display, 'block', `${why}: setup can still be finished by hand`);
+    }
+    assert.ok(!(await detect(ONE)).html.includes(note), 'a detected car stores its PIN, so the note would be false');
   },
 };
 

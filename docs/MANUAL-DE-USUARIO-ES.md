@@ -919,7 +919,7 @@ Para configurar Mate necesitas tres cosas:
    (pertenece a la app, no a tu cuenta). Viene incluido en Mate y se instala solo en el primer
    arranque: nunca se te pide.
 
-3. **Correo, contraseña y el PIN de operaciones de la cuenta.** El **PIN de 4 dígitos** es el mismo
+3. **Correo, contraseña y el PIN de operaciones del coche.** El **PIN de 4 dígitos** es el mismo
    que usas en la app oficial para autorizar los comandos a distancia (cierre, climatización…).
 
 > 💡 ¿Solo quieres echar un vistazo sin configurar nada? Sáltatelo todo y usa el
@@ -1092,8 +1092,9 @@ contraseña de acceso* — y lo único que hace es cerrar esa sesión de contras
 aparece, porque no hay nada que cerrar.
 
 **Para cambiar el PIN del coche 🆕** — si lo cambias en el coche, no hace falta desvincular nada: ve a
-**Ajustes → Vehículo** y, bajo la dirección de la cuenta, encontrarás **PIN de operaciones**. Se
-escribe dos veces, con un ojo para volver a leerlo, y surte efecto al momento — tanto para los
+**Ajustes → Vehículo** y, bajo la dirección de la cuenta, encontrarás **PIN de operaciones de este coche**.
+Cada coche tiene su propio PIN, el que se configura en el coche; con dos coches, elige primero el
+coche. Se escribe dos veces, con un ojo para volver a leerlo, y surte efecto al momento — tanto para los
 comandos de la página como para los que llegan desde Home Assistant. Lo pidió **@alextchao** (#225).
 
 **Si dos Leapmotor comparten tu cuenta 🆕** — aparece un **selector de coche** en la cabecera, al lado
@@ -2147,8 +2148,8 @@ Desde *Ajustes → Exportar/Copia de seguridad* descargas la base de datos (y lo
 - **Poller / Web** — los dos componentes internos de Mate: el *poller* recoge los datos, la *web*
   muestra la interfaz. Para ti, como usuario, es un detalle: trabajan juntos.
 - **VIN** — el número de bastidor del coche; identifica tu vehículo de forma única.
-- **PIN de operaciones** — el PIN de 4 dígitos de la cuenta, necesario para autorizar los comandos a
-  distancia.
+- **PIN de operaciones** — el PIN de 4 dígitos del coche, configurado en el coche y necesario para
+  autorizar los comandos a distancia.
 
 ---
 

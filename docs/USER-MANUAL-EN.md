@@ -874,7 +874,7 @@ To set Mate up you need three things:
    your account). It ships with Mate and is installed by itself on first start: you are never asked
    for it.
 
-3. **Email, password and the account's operation PIN.** The **4-digit PIN** is the one you also use
+3. **Email, password and the car's operation PIN.** The **4-digit PIN** is the one you also use
    in the official app to authorize remote commands (locking, climate…).
 
 > 💡 Just want to take a look without setting anything up? Skip it all and use **[demo mode](#9-demo-mode)**:
@@ -1039,7 +1039,8 @@ access password* — that one ends the password session, nothing else. It is not
 there is nothing to end.
 
 **To change the car's PIN 🆕** — if you change it on the car, nothing needs unlinking: go to
-**Settings → Vehicle**, and under the account address you will find **Operation PIN**. It is typed
+**Settings → Vehicle**, and under the account address you will find **Operation PIN of this car**.
+Each car has its own PIN, the one set on the car; with two cars, pick the car first. It is typed
 twice, with an eye to read it back, and takes effect at once — both for commands from the page and
 for the ones arriving from Home Assistant. Asked for by **@alextchao** (#225).
 
@@ -2019,7 +2020,7 @@ its `secret.key`**.
 - **Poller / Web** — Mate's two internal components: the *poller* collects the data, the *web* shows
   the interface. For you as a user it's a detail: they work together.
 - **VIN** — the car's chassis number; it uniquely identifies your vehicle.
-- **Operation PIN** — the account's 4-digit PIN, needed to authorize remote commands.
+- **Operation PIN** — the car's 4-digit PIN, set on the car and needed to authorize remote commands.
 
 ---
 

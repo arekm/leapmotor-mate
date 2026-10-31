@@ -502,13 +502,12 @@ def use_pin_of(api, db, vin: str) -> None:
 
     The session is shared by every car, and a command can arrive for either: with two cars that
     differ, the session's own PIN would authenticate one car's command with the other's four digits,
-    a failure that happens only sometimes and never says why. No per-car PIN → the install-wide one."""
+    a failure that happens only sometimes and never says why. A car without one gets none, not the
+    last car's."""
     try:
-        pin = db.get_operate_pin(vin)
-        if pin:
-            api.operation_password = pin
+        api.operation_password = db.get_operate_pin(vin)
     except Exception:  # noqa: BLE001 — a PIN lookup must never stop a command from being tried
-        pass
+        api.operation_password = ""
 
 
 def set_charge_current_min(amps: float) -> None:
