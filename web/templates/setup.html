@@ -112,7 +112,7 @@
       </label>
       <input type="email" name="user" required
              value="{{ prefill.user if prefill else '' }}"
-             id="inp-email" placeholder="you@example.com"
+             id="inp-email" placeholder="you@example.com" oninput="forgetDetection()"
              class="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-600 text-white
                     placeholder-slate-500 focus:outline-none focus:border-brand text-sm">
     </div>
@@ -692,6 +692,15 @@ function buildManualInput() {
 }
 
 // ── Detection flow ────────────────────────────────────────────────────────────
+// The cars found belong to the account they were found on: a retry, or another email, detects again.
+function forgetDetection() {
+  for (const id of ['h-vin', 'h-car-type', 'h-vehicles', 'h-battery']) document.getElementById(id).value = '';
+  document.getElementById('h-is-reev').value = '0';
+  Object.keys(CARS).forEach(vin => delete CARS[vin]);
+  document.getElementById('detect-result').style.display = 'none';
+  document.getElementById('btn-submit').style.display = 'none';
+}
+
 async function detectCar() {
   const user = document.getElementById('inp-email').value.trim();
   const pwd  = document.getElementById('inp-password').value.trim();
@@ -712,7 +721,9 @@ async function detectCar() {
   document.getElementById('detect-label').textContent = s.detecting;
   btn.disabled = true;
   btn.style.opacity = '0.6';
-  document.getElementById('detect-result').style.display = 'none';
+  forgetDetection();
+  const email = document.getElementById('inp-email');
+  email.readOnly = true;            // the answer must be for the email shown when it arrives
 
   try {
     const resp = await fetch('api/setup/detect-vehicle', {
@@ -798,6 +809,7 @@ async function detectCar() {
     document.getElementById('detect-label').textContent = s.detectBtn;
     btn.disabled = false;
     btn.style.opacity = '1';
+    email.readOnly = false;
   }
 }
 
