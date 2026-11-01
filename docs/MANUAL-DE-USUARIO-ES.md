@@ -1,8 +1,18 @@
 # LeapMotor Mate — Manual de usuario
 
-> **Versión de Mate:** v4.17.0 · **Idioma:** Español
+> **Versión de Mate:** v4.18.0 · **Idioma:** Español
 
-## Novedades de la versión 4.17.0
+## Novedades de la versión 4.18.0
+
+**Cada coche tiene su propio PIN de operaciones.** En *Ajustes → Vehículo* el formulario dice «PIN de
+operaciones de este coche», con el modelo y el final del VIN; con dos coches, primero se elige el coche
+(ya no existe «Todos los coches»). El PIN escrito ahí es el que usan los comandos: con un solo coche
+podía guardarse donde los comandos no lo leían. Un PIN guardado por una versión anterior pasa a ser el
+del coche al arrancar Mate. Un comando a un coche sin PIN no se envía, y la página dice que se configure
+en Ajustes → Vehículo. Si tras la actualización un comando se rechaza por PIN incorrecto, escribe el
+PIN ahí una vez más.
+
+### Novedades de la versión 4.17.0
 
 **El panel de carga dice cuándo termina la carga.** En la página *Cargas*, *Estado de la carga* muestra
 bajo el tiempo restante la hora a la que termina la carga, p. ej. «Termina a las 14:30», con el día

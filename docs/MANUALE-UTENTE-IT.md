@@ -1,8 +1,18 @@
 # LeapMotor Mate — Manuale utente
 
-> **Versione di Mate:** v4.17.0 · **Lingua:** Italiano
+> **Versione di Mate:** v4.18.0 · **Lingua:** Italiano
 
-## Novità della 4.17.0
+## Novità della 4.18.0
+
+**Ogni auto ha il suo PIN operativo.** In *Impostazioni → Veicolo* il modulo dice «PIN operativo di
+questa auto», con il modello e la fine del VIN; con due auto si sceglie prima l'auto (non c'è più
+«Tutte le auto»). Il PIN scritto lì è quello che usano i comandi: con una sola auto poteva essere
+salvato dove i comandi non lo leggevano. Un PIN salvato da una versione precedente diventa quello
+dell'auto all'avvio di Mate. Un comando a un'auto senza PIN non parte, e la pagina dice di impostarlo
+in Impostazioni → Veicolo. Se dopo l'aggiornamento un comando viene rifiutato per PIN sbagliato,
+riscrivi il PIN lì una volta.
+
+### Novità della 4.17.0
 
 **Il pannello della ricarica dice quando finisce.** Nella pagina *Ricariche*, *Stato di carica* mostra
 sotto il tempo rimanente l'ora in cui la ricarica finisce, es. «Fine alle 14:30», con il giorno quando

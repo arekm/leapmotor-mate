@@ -1,8 +1,17 @@
 # LeapMotor Mate — User Manual
 
-> **Mate version:** v4.17.0 · **Language:** English
+> **Mate version:** v4.18.0 · **Language:** English
 
-## New in 4.17.0
+## New in 4.18.0
+
+**Each car has its own operation PIN.** In *Settings → Vehicle* the form reads "Operation PIN of this
+car", with the car's model and the end of its VIN; with two cars, pick the car first (there is no
+"All cars" any more). The PIN typed there is the one commands use: on a single car it could be saved
+where commands did not read it. A PIN saved by an earlier version becomes the car's own when Mate
+starts. A command to a car with no PIN is not sent, and the page says to set it in Settings → Vehicle.
+If a command is refused for a wrong PIN after the update, type the PIN once more there.
+
+### New in 4.17.0
 
 **The charging panel says when the charge ends.** On the *Charges* page, *Charging status* shows under
 the time remaining the time the charge ends, e.g. "Ends at 14:30", with its day when it ends on another

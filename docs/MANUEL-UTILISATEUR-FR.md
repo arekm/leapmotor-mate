@@ -1,8 +1,19 @@
 # LeapMotor Mate — Manuel utilisateur
 
-> **Version de Mate :** v4.17.0 · **Langue :** Français
+> **Version de Mate :** v4.18.0 · **Langue :** Français
 
-## Nouveautés de la version 4.17.0
+## Nouveautés de la version 4.18.0
+
+**Chaque voiture a son propre code PIN d'opération.** Dans *Paramètres → Véhicule*, le formulaire
+indique « Code PIN d'opération de cette voiture », avec le modèle et la fin du VIN ; avec deux
+voitures, on choisit d'abord la voiture (« Toutes les voitures » n'existe plus). Le code PIN saisi là
+est celui qu'utilisent les commandes : avec une seule voiture, il pouvait être enregistré là où les
+commandes ne le lisaient pas. Un code PIN enregistré par une version précédente devient celui de la
+voiture au démarrage de Mate. Une commande vers une voiture sans code PIN n'est pas envoyée, et la page
+indique de le saisir dans Paramètres → Véhicule. Si après la mise à jour une commande est refusée pour
+un code PIN erroné, saisissez-le là une fois de plus.
+
+### Nouveautés de la version 4.17.0
 
 **Le panneau de recharge indique quand la recharge se termine.** Sur la page *Recharges*, *État de charge*
 affiche sous le temps restant l'heure de fin de la recharge, par ex. « Fin à 14:30 », avec le

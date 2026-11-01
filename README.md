@@ -1,7 +1,7 @@
 # LeapMotor Mate
 
-**v4.17.0:** the Charges page's charging panel **says when the charge ends**, under the minutes left ([D#444](https://github.com/ProtossBlaster/leapmotor-mate/discussions/444), @banolka). In **4.16.3**: a wallbox that moved house is found again.
-See [release notes and upgrade impact](docs/releases/v4.17.0.md).
+**v4.18.0:** **each car has its own operation PIN**, so the PIN typed in Settings → Vehicle is the one commands use ([#449](https://github.com/ProtossBlaster/leapmotor-mate/pull/449), @arekm), and the diagnostics bundle shows the fan and temperature range the cloud gives the car ([#446](https://github.com/ProtossBlaster/leapmotor-mate/pull/446), @arekm). In **4.17.0**: the charging panel says when the charge ends.
+See [release notes and upgrade impact](docs/releases/v4.18.0.md).
 
 [![CI](https://github.com/ProtossBlaster/leapmotor-mate/actions/workflows/ci.yml/badge.svg)](https://github.com/ProtossBlaster/leapmotor-mate/actions/workflows/ci.yml)
 [![Docker](https://github.com/ProtossBlaster/leapmotor-mate/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/ProtossBlaster/leapmotor-mate/actions/workflows/docker-publish.yml)
@@ -360,8 +360,8 @@ Works with any MQTT broker (e.g. the Mosquitto add‑on). Use **Test connection*
 
 # LeapMotor Mate · Italiano
 
-**v4.17.0:** il pannello della ricarica nella pagina Ricariche **dice a che ora finisce la ricarica**, sotto i minuti rimanenti ([D#444](https://github.com/ProtossBlaster/leapmotor-mate/discussions/444), @banolka). Nella **4.16.3**: una wallbox che ha cambiato casa viene ritrovata.
-Vedi [note di rilascio e impatto dell'aggiornamento](docs/releases/v4.17.0.md#italiano).
+**v4.18.0:** **ogni auto ha il suo PIN operativo**, quindi il PIN scritto in Impostazioni → Veicolo è quello che usano i comandi ([#449](https://github.com/ProtossBlaster/leapmotor-mate/pull/449), @arekm), e il pacchetto di diagnostica mostra l'intervallo della ventola e della temperatura che il cloud dà all'auto ([#446](https://github.com/ProtossBlaster/leapmotor-mate/pull/446), @arekm). Nella **4.17.0**: il pannello della ricarica dice quando finisce.
+Vedi [note di rilascio e impatto dell'aggiornamento](docs/releases/v4.18.0.md#italiano).
 
 **Tracciamento viaggi, registro ricariche e controllo remoto per veicoli Leapmotor** — un companion self‑hosted (un *TeslaMate* per Leapmotor). Funziona come **add‑on di Home Assistant** o come **container Docker standalone**.
 

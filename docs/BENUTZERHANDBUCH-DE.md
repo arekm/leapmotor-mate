@@ -1,8 +1,18 @@
 # LeapMotor Mate — Benutzerhandbuch
 
-> **Mate-Version:** v4.17.0 · **Sprache:** Deutsch
+> **Mate-Version:** v4.18.0 · **Sprache:** Deutsch
 
-## Neu in Version 4.17.0
+## Neu in Version 4.18.0
+
+**Jedes Auto hat seine eigene Bedien-PIN.** Unter *Einstellungen → Fahrzeug* heißt das Formular
+„Bedien-PIN dieses Autos", mit dem Modell und dem Ende der FIN; bei zwei Autos wählt man zuerst das
+Auto („Alle Autos" gibt es nicht mehr). Die dort eingegebene PIN ist die, die Befehle verwenden: bei
+einem einzigen Auto konnte sie dort gespeichert werden, wo Befehle sie nicht lasen. Eine von einer
+früheren Version gespeicherte PIN wird beim Start von Mate zur PIN des Autos. Ein Befehl an ein Auto
+ohne PIN wird nicht gesendet, und die Seite sagt, sie unter Einstellungen → Fahrzeug einzugeben. Wird
+ein Befehl nach dem Update wegen einer falschen PIN abgelehnt, geben Sie die PIN dort noch einmal ein.
+
+### Neu in Version 4.17.0
 
 **Das Ladefeld zeigt, wann der Ladevorgang endet.** Auf der Seite *Ladevorgänge* zeigt *Ladestatus*
 unter der Restzeit die Uhrzeit, zu der der Ladevorgang endet, z. B. „Ende um 14:30", mit dem Tag, wenn
