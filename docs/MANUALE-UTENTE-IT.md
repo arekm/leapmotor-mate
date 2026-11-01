@@ -914,7 +914,7 @@ Per configurare Mate ti servono tre cose:
    Leapmotor (`app.crt` + `app.key`) per il login — è **uguale per tutti** (è quello dell'app, non del
    tuo account). È incluso in Mate e si installa da solo al primo avvio: non ti viene mai chiesto.
 
-3. **Email, password e PIN operativo dell'account.** Il **PIN a 4 cifre** è quello che usi anche
+3. **Email, password e PIN operativo dell'auto.** Il **PIN a 4 cifre** è quello che usi anche
    nell'app ufficiale per autorizzare i comandi a distanza (chiusura, clima…).
 
 > 💡 Vuoi solo dare un'occhiata senza configurare niente? Salta tutto e usa la **[modalità demo](#9-modalità-demo)**:
@@ -1078,7 +1078,8 @@ d'accesso* — quello chiude la sessione della password, niente altro. Senza pas
 non c'è niente da chiudere.
 
 **Per cambiare il PIN dell'auto 🆕** — se lo cambi sull'auto, non serve sganciare niente: vai su
-**Impostazioni → Veicolo**, sotto l'indirizzo dell'account trovi **PIN operativo**. Si digita due
+**Impostazioni → Veicolo**, sotto l'indirizzo dell'account trovi **PIN operativo di questa auto**.
+Ogni auto ha il suo PIN, quello impostato sull'auto; con due auto, scegli prima l'auto. Si digita due
 volte, con l'occhio per rileggerlo, e vale subito — sia per i comandi dalla pagina sia per quelli
 che arrivano da Home Assistant. Domanda di **@alextchao** (#225).
 
@@ -2126,7 +2127,8 @@ Da *Impostazioni → Esporta/backup* scarichi il database (e i CSV). Conserva il
 - **Poller / Web** — i due componenti interni di Mate: il *poller* raccoglie i dati, il *web* mostra
   l'interfaccia. Per te utente è un dettaglio: lavorano insieme.
 - **VIN** — il numero di telaio dell'auto; identifica univocamente la tua vettura.
-- **PIN operativo** — il PIN a 4 cifre dell'account, necessario per autorizzare i comandi a distanza.
+- **PIN operativo** — il PIN a 4 cifre dell'auto, impostato sull'auto e necessario per autorizzare i
+  comandi a distanza.
 
 ---
 

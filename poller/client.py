@@ -497,6 +497,19 @@ def _si(sig: dict, k: str):
 _CHARGE_CURRENT_MIN_A = 2.0
 
 
+def use_pin_of(api, db, vin: str) -> None:
+    """Authorise the next command with the PIN of the car it is for (#186, @cookingeek).
+
+    The session is shared by every car, and a command can arrive for either: with two cars that
+    differ, the session's own PIN would authenticate one car's command with the other's four digits,
+    a failure that happens only sometimes and never says why. A car without one gets none, not the
+    last car's."""
+    try:
+        api.operation_password = db.get_operate_pin(vin)
+    except Exception:  # noqa: BLE001 — a PIN lookup must never stop a command from being tried
+        api.operation_password = ""
+
+
 def set_charge_current_min(amps: float) -> None:
     """Update the charge-detection current floor (A) from the Settings value."""
     global _CHARGE_CURRENT_MIN_A

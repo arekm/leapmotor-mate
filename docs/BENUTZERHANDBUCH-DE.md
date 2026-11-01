@@ -946,7 +946,7 @@ Um Mate einzurichten, benötigen Sie drei Dinge:
    App, nicht das Ihres Kontos). Es ist in Mate enthalten und wird beim ersten Start von selbst
    installiert: Sie werden nie danach gefragt.
 
-3. **E-Mail, Passwort und Bedien-PIN des Kontos.** Der **vierstellige PIN** ist derselbe, den Sie auch in der
+3. **E-Mail, Passwort und Bedien-PIN des Autos.** Der **vierstellige PIN** ist derselbe, den Sie auch in der
    offiziellen App verwenden, um die Fernbefehle (Verriegeln, Klima…) zu autorisieren.
 
 > 💡 Sie wollen nur einen Blick darauf werfen, ohne etwas einzurichten? Überspringen Sie alles und nutzen Sie den
@@ -1113,9 +1113,10 @@ Zugangspasswort gesetzt haben*; es beendet die Passwort-Sitzung und sonst nichts
 es nicht da, weil es nichts zu beenden gibt.
 
 **Um die PIN des Autos zu ändern 🆕** — wenn Sie sie am Auto ändern, muss nichts getrennt werden:
-unter **Einstellungen → Fahrzeug** finden Sie unter der Kontoadresse die **Bedien-PIN**. Sie wird
-zweimal eingegeben, mit einem Auge zum Nachlesen, und gilt sofort — sowohl für Befehle von der Seite
-als auch für die aus Home Assistant. Gewünscht von **@alextchao** (#225).
+unter **Einstellungen → Fahrzeug** finden Sie unter der Kontoadresse die **Bedien-PIN dieses Autos**.
+Jedes Auto hat seine eigene PIN, die am Auto eingestellt wird; bei zwei Autos wählen Sie zuerst das
+Auto. Sie wird zweimal eingegeben, mit einem Auge zum Nachlesen, und gilt sofort — sowohl für Befehle
+von der Seite als auch für die aus Home Assistant. Gewünscht von **@alextchao** (#225).
 
 **Wenn zwei Leapmotor dasselbe Konto teilen 🆕** — in der Kopfzeile erscheint eine **Fahrzeugauswahl**,
 neben dem Modell-Abzeichen. Sie ist erst ab dem zweiten Auto da: mit einem Leapmotor ändert sich gar
@@ -2157,7 +2158,8 @@ Unter *Einstellungen → Export/Backup* laden Sie die Datenbank (und die CSVs) h
 - **Poller / Web** — die beiden internen Komponenten von Mate: der *Poller* sammelt die Daten, das *Web* zeigt die
   Oberfläche. Für Sie als Benutzer ist das ein Detail: Sie arbeiten zusammen.
 - **VIN** — die Fahrgestellnummer des Autos; sie identifiziert Ihr Fahrzeug eindeutig.
-- **Bedien-PIN** — der vierstellige PIN des Kontos, nötig, um die Fernbefehle zu autorisieren.
+- **Bedien-PIN** — der vierstellige PIN des Autos, am Auto eingestellt und nötig, um die Fernbefehle
+  zu autorisieren.
 
 ---
 

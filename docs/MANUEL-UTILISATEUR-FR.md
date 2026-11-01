@@ -957,7 +957,7 @@ Pour configurer Mate, il vous faut trois choses :
    monde** (celui de l'application, pas de votre compte). Il est fourni avec Mate et s'installe tout seul
    au premier démarrage : il ne vous est jamais demandé.
 
-3. **L'e-mail, le mot de passe et le code PIN d'opération du compte.** Le **PIN à 4 chiffres** est celui que
+3. **L'e-mail, le mot de passe et le code PIN d'opération de la voiture.** Le **PIN à 4 chiffres** est celui que
    vous utilisez aussi dans l'application officielle pour autoriser les commandes à distance (verrouillage,
    climatisation…).
 
@@ -1128,10 +1128,11 @@ défini un mot de passe d'accès* — celle-ci ferme la session du mot de passe,
 de passe, elle n'apparaît pas, car il n'y a rien à fermer.
 
 **Pour changer le code PIN de la voiture 🆕** — si vous le changez sur la voiture, rien à délier :
-allez dans **Paramètres → Véhicule**, sous l'adresse du compte se trouve **Code PIN d'opération**.
-Il se saisit deux fois, avec un œil pour le relire, et prend effet immédiatement — aussi bien pour
-les commandes depuis la page que pour celles venant de Home Assistant. Demandé par **@alextchao**
-(#225).
+allez dans **Paramètres → Véhicule**, sous l'adresse du compte se trouve **Code PIN d'opération de cette
+voiture**. Chaque voiture a son propre PIN, celui réglé sur la voiture ; avec deux voitures, choisissez
+d'abord la voiture. Il se saisit deux fois, avec un œil pour le relire, et prend effet immédiatement —
+aussi bien pour les commandes depuis la page que pour celles venant de Home Assistant. Demandé par
+**@alextchao** (#225).
 
 **Si deux Leapmotor partagent votre compte 🆕** — un **sélecteur de voiture** apparaît dans l'en-tête,
 à côté du badge du modèle. Il n'est là qu'à partir de la deuxième voiture : avec une seule Leapmotor,
@@ -2181,7 +2182,8 @@ données **avec sa `secret.key`**.
 - **Poller / Web** — les deux composants internes de Mate : le *poller* collecte les données, le *web* affiche
   l'interface. Pour vous, utilisateur, c'est un détail : ils travaillent ensemble.
 - **VIN** — le numéro de châssis de la voiture ; il identifie de façon unique votre véhicule.
-- **PIN d'opération** — le PIN à 4 chiffres du compte, nécessaire pour autoriser les commandes à distance.
+- **PIN d'opération** — le PIN à 4 chiffres de la voiture, réglé sur la voiture et nécessaire pour
+  autoriser les commandes à distance.
 
 ---
 

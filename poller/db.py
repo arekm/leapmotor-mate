@@ -407,6 +407,7 @@ class Database:
         self._repair_reev_engine_efficiency()
         self._repair_bogus_wallbox_energy()
         self.migrate_secrets()
+        self.migrate_install_pin()
         self._check_decryption()
         log.info("Database ready: %s", path)
 
@@ -1020,17 +1021,36 @@ class Database:
         return out
 
     def get_operate_pin(self, vin: str = "") -> str:
-        """The PIN that authorises a command ON THIS CAR — its own, else the install-wide one (#186).
+        """The PIN that authorises a command ON THIS CAR — its own, else `LEAPMOTOR_PIN` (#186).
 
         The twin of web/db_reader.get_operate_pin; a test holds the two to the same answers. It
         matters here more than there: MQTT is not scoped to a picked car, the topic names the VIN,
         and a command can arrive for either — so authorising with the wrong car's four digits fails
         only sometimes, and never says why."""
-        if vin:
-            own = self.get_secret(f"leapmotor_pin_{str(vin).lower()}", "")
-            if own:
-                return own
-        return self.get_secret("leapmotor_pin", "") or os.environ.get("LEAPMOTOR_PIN", "")
+        own = self.get_secret(f"leapmotor_pin_{str(vin).lower()}", "") if vin else ""
+        return own or os.environ.get("LEAPMOTOR_PIN", "")
+
+    def migrate_install_pin(self) -> list:
+        """Give the install-wide PIN to every car without its own, then drop it. Returns those VINs.
+
+        The PIN is set on the car, so it belongs to the car. Runs when the database opens and again
+        once the cars are registered; idempotent. With two cars a car's own PIN is never overwritten;
+        with one, the install-wide PIN wins, because only the Settings form wrote it alone, after the
+        wizard had written both."""
+        shared = self.get_secret("leapmotor_pin", "")
+        vins = self.vehicle_vins()
+        if not shared or not vins:      # with no car yet, the PIN waits for one
+            return []
+        given = []
+        for vin in vins:
+            own = self.get_secret(f"leapmotor_pin_{vin.lower()}", "")
+            if own != shared and (not own or len(vins) == 1):
+                self.set_secret(f"leapmotor_pin_{vin.lower()}", shared)
+                given.append(vin)
+        self.set_setting("leapmotor_pin", "")
+        log.info("PIN: the install-wide PIN is now the own PIN of %s",
+                 ", ".join(v[-6:] for v in given) or "no car (each has its own)")
+        return given
 
     def migrate_secrets(self) -> None:
         """One-time, idempotent: encrypt any plaintext secret in place. Runs every

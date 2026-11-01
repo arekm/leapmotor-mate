@@ -1464,11 +1464,9 @@ def get_operate_pin(vin: str = "") -> str:
     second one would have failed, and **only the commands**: reads carry no PIN, so the pages would
     have looked perfectly healthy while the buttons quietly did nothing.
 
-    🔑 The cloud checks it per VIN — `/operPwd/verify` takes `operatePassword` *and* `vin`. That does
-    not prove two cars must differ; it proves the API is built so they can.
-
-    ⚠️ The fallback is the whole safety of it. No per-car PIN → the install-wide one, which is what
-    every install alive today has: one car, or two cars sharing a PIN, see no change at all.
+    🔑 The cloud checks it per VIN — `/operPwd/verify` takes `operatePassword` *and* `vin` — and the
+    PIN is set on the car itself, so each car has its own. `LEAPMOTOR_PIN` gives every car the same
+    one, for an install configured from its environment.
     """
     if not vin:
         row = None
@@ -1478,15 +1476,11 @@ def get_operate_pin(vin: str = "") -> str:
         except sqlite3.Error:
             pass
         vin = (row["vin"] if row and row["vin"] else "")
-    if vin:
-        own = get_secret(_pin_key(vin), "")
-        if own:
-            return own
-    return get_secret("leapmotor_pin", "") or os.environ.get("LEAPMOTOR_PIN", "")
+    return (get_secret(_pin_key(vin), "") if vin else "") or os.environ.get("LEAPMOTOR_PIN", "")
 
 
 def set_operate_pin(pin: str, vin: str) -> None:
-    """Give one car its own PIN — or clear it, which returns that car to the install-wide one."""
+    """Store one car's PIN — or clear it, which leaves that car with `LEAPMOTOR_PIN` or none."""
     set_secret(_pin_key(vin), pin or "")
 
 
